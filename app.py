@@ -178,7 +178,7 @@ if run_btn:
 
     # Data + download
     st.header("Data")
-    st.dataframe(df_market.head(50))
+    st.dataframe(df_market)
     csv = df_market.to_csv(index=False).encode("utf-8")
     st.download_button("Download CSV", data=csv, file_name="simulation_results_multi.csv", mime="text/csv")
 
