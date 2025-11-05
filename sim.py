@@ -7,7 +7,6 @@ import config as cfg
 from population import Population
 from firm import Firm, spawn_firms
 
-
 def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.DataFrame, List[Firm]]:
     T  = cfg.T
     p0 = cfg.p0

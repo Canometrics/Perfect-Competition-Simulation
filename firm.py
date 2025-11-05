@@ -98,6 +98,8 @@ class Firm:
         self.history.loc[self.history.index[-1], "active"] = self.active
         return TR, TC, profit
 
+
+
 # helper to spawn firms
 def spawn_firms(rng: np.random.Generator, n: int, start_id: int = 0) -> List[Firm]:
     """Vectorized firm creation for both initial seeding and late entry."""
