@@ -1,10 +1,10 @@
-
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
 import pandas as pd
 import numpy as np
+from typing import List
 
-from config import ADJ_RATE, TREASURY_GRACE_TICKS
+import config as cfg
 
 @dataclass
 class Firm:
@@ -48,16 +48,18 @@ class Firm:
             return self.q
 
     def update_quantity(self, price: float, tick: int) -> None:
+        # make nothing if shut down
         if not self.active:
             self.q = 0.0
             self.history.loc[len(self.history)] = {
                 "tick": tick, "quantity": self.q, "price": price,
                 "revenue": 0.0, "cost": 0.0, "profit": 0.0, "active": self.active, "treasury": self.treasury
-            }
+            } # initialize new bookkeeping entry for firm
             return
 
+        # return positive output if operating
         target = self.decide_target(price)
-        q_proposed = float(np.clip(self.q + ADJ_RATE * (target - self.q), 0.0, self.capacity))
+        q_proposed = float(np.clip(self.q + cfg.ADJ_RATE * (target - self.q), 0.0, self.capacity)) # clip s.t. not over capacity & not 0
 
         # Freeze tiny changes to reduce oscillation
         last_q = self._last_quantity()
@@ -68,7 +70,7 @@ class Firm:
         self.history.loc[len(self.history)] = {
             "tick": tick, "quantity": self.q, "price": price,
             "revenue": 0.0, "cost": 0.0, "profit": 0.0, "active": self.active, "treasury": self.treasury
-        }
+        } # initialize new bookkeeping entry for firm
 
     def book_finance(self, price: float, sales: float) -> Tuple[float, float, float]:
         TR = price * sales
@@ -89,9 +91,29 @@ class Firm:
             self.neg_treasury_streak = 0
 
         # Shutdown if negative treasury persists for grace period
-        if self.neg_treasury_streak >= TREASURY_GRACE_TICKS:
+        if self.neg_treasury_streak >= cfg.TREASURY_GRACE_TICKS:
             self.active = False
 
         # reflect active flag
         self.history.loc[self.history.index[-1], "active"] = self.active
         return TR, TC, profit
+
+# helper to spawn firms
+def spawn_firms(rng: np.random.Generator, n: int, start_id: int = 0) -> List[Firm]:
+    """Vectorized firm creation for both initial seeding and late entry."""
+    FC  = 20.0 * np.exp(rng.normal(cfg.FC_LOGMEAN, cfg.FC_LOGSD, size=n))
+    MC  = np.clip(rng.normal(cfg.MC_MEAN, cfg.MC_SD, size=n), 0.5, None)
+    CAP = rng.uniform(cfg.CAP_LOW, cfg.CAP_HIGH, size=n)
+
+    return [
+        Firm(
+            id=start_id + i,
+            FC=float(FC[i]),
+            MC=float(MC[i]),
+            base_capacity=float(CAP[i]),
+            capacity=int(CAP[i]),
+            q=0.0,
+            start_capital=float(cfg.START_CAPITAL)
+        )
+        for i in range(n)
+    ]

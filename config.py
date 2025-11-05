@@ -34,7 +34,7 @@ MC_MULT_DURING_SHOCK = 2.0
 USE_MC_SHOCK = True
 
 # ----- ENTRY -----
-ENTRY_ALPHA = 0.002          # controls steepness of P(entry)
+ENTRY_ALPHA = 0.002          # controls steepness of Pr(entry)
 ENTRY_WINDOW = 8             # lookback window (ticks) for avg profit
 ENTRY_MAX_PER_TICK = 3       # cap entrants per tick
 

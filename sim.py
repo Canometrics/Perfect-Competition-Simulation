@@ -5,22 +5,19 @@ import math
 
 import config as cfg
 from population import Population
-from firm import Firm
-from demand import realized_tier_labels
-from spawn import spawn_firms
+from firm import Firm, spawn_firms
 
 
 def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.DataFrame, List[Firm]]:
-    # pull live values from cfg unless explicitly overridden
-    if T  is None: T  = cfg.T
-    if p0 is None: p0 = cfg.p0
+    T  = cfg.T
+    p0 = cfg.p0
 
     pop = Population(cfg.POP_SIZE, cfg.INCOME_PC)
     p = p0
 
     # RNGs
     rng_init  = np.random.default_rng(cfg.SEED)
-    rng_entry = np.random.default_rng(cfg.SEED + 101)
+    rng_entry = np.random.default_rng(cfg.SEED + 1)
 
     firms: List[Firm] = spawn_firms(rng_init, n=cfg.N_FIRMS, start_id=0)
     next_id = len(firms)
@@ -40,7 +37,7 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
         q_supply = int(sum(f.q for f in firms))
 
         # 4) Realized purchases at price with supply constraint
-        q_bought, tier_realized, tiers_bought = realized_tier_labels(p, q_supply, pop)
+        q_bought, tier_realized, tiers_bought = pop.realized_qty(p, q_supply)
 
         # 5) Allocate sales proportionally by supply
         sales_by_firm: Dict[int, float] = {f.id: 0.0 for f in firms}
@@ -67,14 +64,16 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
         if any(not f.active for f in firms):
             firms = [f for f in firms if f.active]
 
+        # bookkeeping to track market
         active_now = sum(1 for f in firms if f.active) or 1
         avg_profit_per_firm = (np.mean(profit_hist) / active_now) if profit_hist else 0.0
         profit_pos = max(avg_profit_per_firm, 0.0)
-        p_entry = 1.0 - math.exp(-cfg.ENTRY_ALPHA * profit_pos)
+        p_entry = 1.0 - math.exp(-cfg.ENTRY_ALPHA * profit_pos)  # probability of entry at current profit levels
 
+        # market entrants
         for _ in range(cfg.ENTRY_MAX_PER_TICK):
-            if rng_entry.random() < p_entry:
-                entrant = spawn_firms(rng_entry, n=1, start_id=next_id)[0]
+            if rng_entry.random() < p_entry: # introduce randomness into how many firms enter
+                entrant = spawn_firms(rng_entry, n=1, start_id=next_id)[0] # fn returns list so get 1st entry
                 firms.append(entrant)
                 next_id += 1
 
@@ -96,7 +95,7 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
             "active_firms": sum(1 for f in firms if f.active),
         })
 
-        # 8) Price update with inertia (tatonnement + smoothing)
+        # 8) Price update with inertia (tatonnement + smoothing), sets price for next tick, since all other actions are done
         excess = q_demand - q_supply
         p_target = max(0.01, p + cfg.tatonnement_speed * excess)
         alpha = max(0.0, min(1.0, float(cfg.price_alpha)))  # clamp

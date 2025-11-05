@@ -43,3 +43,26 @@ class Population:
         # 3) Luxury
         buy_lux = math.ceil(min(q_lux, B / p))
         return buy_life + buy_every + buy_lux, ("luxury" if buy_lux >= q_lux else "everyday")
+
+    def realized_qty(self, price: float, available_q: float):
+        p = max(0.01, price)
+        B = self.budget
+        can_buy = math.ceil(min(B / p, available_q))
+
+        q_life  = math.ceil(self.NEED_LIFE  * self.size / 100.0)
+        q_every = math.ceil(self.NEED_EVERY * self.size / 100.0)
+        q_lux   = math.ceil(self.NEED_LUX   * self.size / 100.0)
+
+        tiers = {"life": 0, "everyday": 0, "luxury": 0}
+
+        tiers["life"] = min(q_life, can_buy); can_buy -= tiers["life"]
+        if tiers["life"] < q_life:
+            return sum(tiers.values()), "life_partial", tiers
+
+        tiers["everyday"] = min(q_every, can_buy); can_buy -= tiers["everyday"]
+        if tiers["everyday"] < q_every:
+            return sum(tiers.values()), "life", tiers
+
+        tiers["luxury"] = min(q_lux, can_buy)
+        label = "luxury" if tiers["luxury"] >= q_lux else "everyday"
+        return sum(tiers.values()), label, tiers
