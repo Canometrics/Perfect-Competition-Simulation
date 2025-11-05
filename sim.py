@@ -26,7 +26,7 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
     records = []
 
     for t in range(T + 1):
-        # 1) Affordable demand
+        # 1) Aggregate demand
         q_demand, tier_afford = pop.target_qty(p)
 
         # 2) Firms update quantities
@@ -40,13 +40,17 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
         q_bought, tier_realized, tiers_bought = pop.realized_qty(p, q_supply)
 
         # 5) Allocate sales proportionally by supply
+        """
+        Demand may not always be the same as quantity. In this step, the quantity actually bought by consumers is distributed as sales to firms.
+        If a firm produced x% of the good, they receive x% of the sales
+        """
         sales_by_firm: Dict[int, float] = {f.id: 0.0 for f in firms}
         if q_supply > 0:
             for f in firms:
                 share = (f.q / q_supply) if q_supply > 0 else 0.0
                 sales_by_firm[f.id] = min(f.q, share * q_bought)
 
-        # 6) Finance per firm and shutdown updates
+        # 6) With sales by firm, calculate finances
         TR_total = TC_total = Profit_total = 0.0
         for f in firms:
             sales_i = sales_by_firm[f.id] if f.active else 0.0
@@ -55,22 +59,22 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
             TC_total += TC_i
             Profit_total += PROF_i
 
-        # Entry bookkeeping
+        # Bookkeping: Update profit values for new firm entry window, remove old ones (those before the profit window)
         profit_hist.append(Profit_total)
         if len(profit_hist) > cfg.ENTRY_WINDOW:
             profit_hist = profit_hist[-cfg.ENTRY_WINDOW:]
 
-        # Remove inactive
+        # Bookkeeping: Remove inactive firms
         if any(not f.active for f in firms):
             firms = [f for f in firms if f.active]
 
-        # bookkeeping to track market
+        # Bookkeeping: track market
         active_now = sum(1 for f in firms if f.active) or 1
         avg_profit_per_firm = (np.mean(profit_hist) / active_now) if profit_hist else 0.0
         profit_pos = max(avg_profit_per_firm, 0.0)
         p_entry = 1.0 - math.exp(-cfg.ENTRY_ALPHA * profit_pos)  # probability of entry at current profit levels
 
-        # market entrants
+        # calculate market entrants
         for _ in range(cfg.ENTRY_MAX_PER_TICK):
             if rng_entry.random() < p_entry: # introduce randomness into how many firms enter
                 entrant = spawn_firms(rng_entry, n=1, start_id=next_id)[0] # fn returns list so get 1st entry
