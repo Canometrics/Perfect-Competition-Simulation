@@ -46,4 +46,8 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
     # collect all firms across markets
     firms: List[Firm] = [f for m in markets.values() for f in m.firms]
 
+    # Record product identity in firm histories for final reporting
+    for f in firms:
+        f.history["good"] = f.good
+
     return pd.DataFrame.from_records(records), firms

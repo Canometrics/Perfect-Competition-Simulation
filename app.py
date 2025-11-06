@@ -192,6 +192,7 @@ if run_btn:
         last = h.iloc[-1]
         row = {
             "firm": f.id,
+            "good": f.good,
             "active": f.active,
             "FC": round(f.FC, 2),
             "MC": round(f.MC, 2),
