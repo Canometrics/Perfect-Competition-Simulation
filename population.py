@@ -1,30 +1,40 @@
-
-from dataclasses import dataclass
+from typing import Dict, Tuple
+from dataclasses import dataclass, field
 import math
+from copy import deepcopy
+
+import goods as gds
 
 @dataclass
 class Population:
     size: int
     income_pc: float
-    NEED_LIFE: int = 30.0     # per 100 ppl (total)
-    NEED_EVERY: int = 50.0    # per 100 ppl (total)
-    NEED_LUX: int = 100.0     # per 100 ppl (total)
+
+    goods_for_tier: Dict[gds.GoodID, Dict[str, float]] = field(
+        default_factory=lambda: deepcopy(gds.NEEDS_PER_GOOD)
+    )
 
     @property
     def budget(self) -> float:
         return self.size * self.income_pc / 100
 
-    def target_qty(self, price: float):
+
+    def needs_per_good(self, good: gds.GoodID) -> Tuple[int, int, int]:
+        tiers = self.goods_for_tier.get(good, self.goods_for_tier[gds.GOODS[0]])
+        q_life = math.ceil(tiers['life'] * self.size / 100)
+        q_every = math.ceil(tiers['everyday'] * self.size / 100)
+        q_lux = math.ceil(tiers['luxury'] * self.size / 100)
+        return q_life, q_every, q_lux
+
+
+    def target_qty_per_good(self, price: float, good: gds.GoodID):
         """
         Compute affordable demand at current price by walking tiers in order:
         life -> everyday -> luxury. If the next tier is not fully affordable,
         buy as much of the current tier as the remaining budget allows.
         Returns (total_qty, label_of_highest_tier_reached_or_partial).
         """
-        q_life = math.ceil(self.NEED_LIFE / 100.0 * self.size)
-        q_every = math.ceil(self.NEED_EVERY / 100.0 * self.size)
-        q_lux  = math.ceil(self.NEED_LUX  / 100.0 * self.size)
-
+        q_life, q_every, q_lux = self.needs_per_good(good)
         p = max(0.01, price)
         B = self.budget
 
@@ -44,14 +54,12 @@ class Population:
         buy_lux = math.ceil(min(q_lux, B / p))
         return buy_life + buy_every + buy_lux, ("luxury" if buy_lux >= q_lux else "everyday")
 
-    def realized_qty(self, price: float, available_q: float):
+    def realized_qty(self, price: float, available_q: int, good: gds.GoodID):
         p = max(0.01, price)
         B = self.budget
         can_buy = math.ceil(min(B / p, available_q))
 
-        q_life  = math.ceil(self.NEED_LIFE  * self.size / 100.0)
-        q_every = math.ceil(self.NEED_EVERY * self.size / 100.0)
-        q_lux   = math.ceil(self.NEED_LUX   * self.size / 100.0)
+        q_life, q_every, q_lux = self.needs_per_good(good)
 
         tiers = {"life": 0, "everyday": 0, "luxury": 0}
 

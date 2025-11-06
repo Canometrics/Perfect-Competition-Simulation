@@ -5,21 +5,26 @@ import numpy as np
 from typing import List
 
 import config as cfg
+import goods as gds
 
 @dataclass
 class Firm:
     id: int
+    good: gds.GoodID
     FC: float
     MC: float
     capacity: int
     q: float
-    active: bool = True
-    loss_streak: int = 0  # retained for compatibility (unused for shutdown)
-    base_capacity: Optional[float] = None
+
     base_MC: Optional[float] = None
+    base_capacity: Optional[float] = None
+
+    active: bool = True
+
     start_capital: float = 0.0
     treasury: float = 0.0
     neg_treasury_streak: int = 0
+
     history: pd.DataFrame = field(default_factory=lambda: pd.DataFrame(
         columns=[
             "tick", "quantity", "price", "revenue", "cost", "profit", "active", "treasury"
@@ -101,7 +106,7 @@ class Firm:
 
 
 # helper to spawn firms
-def spawn_firms(rng: np.random.Generator, n: int, start_id: int = 0) -> List[Firm]:
+def spawn_firms(good: gds.GoodID, rng: np.random.Generator, n: int,start_id: int = 0, ) -> List[Firm]:
     """Vectorized firm creation for both initial seeding and late entry."""
     FC  = 20.0 * np.exp(rng.normal(cfg.FC_LOGMEAN, cfg.FC_LOGSD, size=n))
     MC  = np.clip(rng.normal(cfg.MC_MEAN, cfg.MC_SD, size=n), 0.5, None)
@@ -115,6 +120,7 @@ def spawn_firms(rng: np.random.Generator, n: int, start_id: int = 0) -> List[Fir
             base_capacity=float(CAP[i]),
             capacity=int(CAP[i]),
             q=0.0,
+            good = good,
             start_capital=float(cfg.START_CAPITAL)
         )
         for i in range(n)
