@@ -36,10 +36,11 @@ class Market:
         self.firms.extend(batch)
         return start_id + len(batch)
 
-    def _demand(self, pop: Population) -> Tuple[int, str]:
-        # 1) Aggregating demand
-        q_demand, tier_afford = pop.target_qty_per_good(self.price, good=self.good)
-        return q_demand, tier_afford
+    #legacy
+    # def _demand(self, pop: Population) -> Tuple[int, str]:
+    #     # 1) Aggregating demand
+    #     q_demand, tier_afford = pop.qty_demand_per_good(self.price, good=self.good)
+    #     return q_demand, tier_afford
 
     def _update_firms(self, tick: int) -> None:
         # 2) Firms update quantities
@@ -52,7 +53,12 @@ class Market:
 
     def _clear_market(self, pop: Population, q_supply: int) -> Tuple[int, str, Dict[str, int], Dict[int, float]]:
         # 4) Realized purchases at price with supply constraint
-        q_bought, tier_realized, tiers_bought = pop.realized_qty(self.price, q_supply, good=self.good)
+        q_bought, tier_realized, tiers_bought = pop.buy_for_good(
+            good=self.good,
+            price=self.price,
+            available_q=q_supply,
+            remaining_budget=pop.budget
+            )
 
         # 5) Allocate sales proportionally by supply
         """
@@ -66,6 +72,8 @@ class Market:
                 # Single good per firm, so set not accumulate
                 sales_by_firm[f.id] = min(f.q, share * q_bought)
         return q_bought, tier_realized, tiers_bought, sales_by_firm
+    
+        # add inventory for unsold goods
 
     def _book_finance(self, sales_by_firm: Dict[int, float]) -> Tuple[float, float, float]:
         # 6) With sales by firm, calculate finances
@@ -133,13 +141,13 @@ class Market:
                 if f.base_MC is not None:
                     f.MC = float(f.base_MC)
 
-    def step(self, pop: Population, rng_entry: np.random.Generator, tick: int, records: List[Dict], good_label_in_record: bool = False) -> int:
+    def step(self, pop: Population, demand: Tuple[int, int, int], rng_entry: np.random.Generator, tick: int, records: List[Dict], good_label_in_record: bool = False) -> int:
         """
         Runs one tick for this market, pushes one record to `records`, and returns updated next_id (if entries happen).
         The caller must pass and track `next_id`.
         """
         # 1..3
-        q_demand, tier_afford = self._demand(pop)
+        q_demand = demand
         self._update_firms(tick)
         q_supply = self._supply()
 
@@ -166,7 +174,6 @@ class Market:
             "q_demand": q_demand,
             "q_realized": q_bought,
             "q_supply": q_supply,
-            "tier": tier_afford,
             "tier_realized": tier_realized,
             "life": tiers_bought["life"],
             "everyday": tiers_bought["everyday"],

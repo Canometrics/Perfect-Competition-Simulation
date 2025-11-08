@@ -17,60 +17,141 @@ class Population:
     @property
     def budget(self) -> float:
         return self.size * self.income_pc / 100
+    # later implement MPS/C
 
+    @property
+    def needs_all_goods(self) -> Dict[gds.GoodID, Tuple[int, int, int]]:
+        """
+        Return needs for every good, dynamically,
+        """
+        out: Dict[gds.GoodID, Tuple[int, int, int]] = {}
+
+        for good, tiers in self.goods_for_tier.items():
+            q_life  = math.ceil(tiers['life']     * self.size / 100)
+            q_every = math.ceil(tiers['everyday'] * self.size / 100)
+            q_lux   = math.ceil(tiers['luxury']   * self.size / 100)
+
+            out[good] = (q_life, q_every, q_lux)
+
+        return out
 
     def needs_per_good(self, good: gds.GoodID) -> Tuple[int, int, int]:
-        tiers = self.goods_for_tier.get(good, self.goods_for_tier[gds.GOODS[0]])
-        q_life = math.ceil(tiers['life'] * self.size / 100)
-        q_every = math.ceil(tiers['everyday'] * self.size / 100)
-        q_lux = math.ceil(tiers['luxury'] * self.size / 100)
-        return q_life, q_every, q_lux
+        return self.needs_all_goods[good]
 
 
-    def target_qty_per_good(self, price: float, good: gds.GoodID):
-        """
-        Compute affordable demand at current price by walking tiers in order:
-        life -> everyday -> luxury. If the next tier is not fully affordable,
-        buy as much of the current tier as the remaining budget allows.
-        Returns (total_qty, label_of_highest_tier_reached_or_partial).
-        """
-        q_life, q_every, q_lux = self.needs_per_good(good)
-        p = max(0.01, price)
+    def demand_for_all_goods(self, prices: Dict[gds.GoodID, float]) -> Dict[gds.GoodID, int]:
+        needs = self.needs_all_goods
         B = self.budget
+        demand: Dict[gds.GoodID, int] = {g: 0 for g in needs.keys()}
 
-        # 1) Life
-        buy_life = math.ceil(min(q_life, B / p))
-        B -= p * buy_life
-        if buy_life < q_life:
-            return buy_life, "life_partial"
 
-        # 2) Everyday
-        buy_every = math.ceil(min(q_every, B / p))
-        B -= p * buy_every
-        if buy_every < q_every:
-            return buy_life + buy_every, "life"
+        def tier_cost_and_fill(targets: Dict[gds.GoodID, float], budget: float) -> float:
+            """Attempt to buy this tier. If budget < total cost, buy proportionally and stop.
+            Returns remaining budget after this tier."""
+            # Build cost vector only for goods with positive prices and positive targets
+            valid = [
+                (g, q, prices.get(g, 0.0))
+                for g, q in targets.items()
+                if q > 0 and prices.get(g, 0.0) > 0
+                ]
+            if not valid:
+                return budget
 
-        # 3) Luxury
-        buy_lux = math.ceil(min(q_lux, B / p))
-        return buy_life + buy_every + buy_lux, ("luxury" if buy_lux >= q_lux else "everyday")
+            total_cost = sum(q * p for _, q, p in valid)
 
-    def realized_qty(self, price: float, available_q: int, good: gds.GoodID):
-        p = max(0.01, price)
-        B = self.budget
-        can_buy = math.ceil(min(B / p, available_q))
+            if budget >= total_cost:
+                # buy all
+                for g, q, _p in valid:
+                    demand[g] += q
+                return budget - total_cost
+            else:
+                # buy proportionally
+                if total_cost > 0:
+                    f = budget / total_cost
+                else:
+                    f = 0.0
+                for g, q, _p in valid:
+                    demand[g] += f * q
+                return 0.0
 
+        # Build tier targets
+        # life = life
+        life_targets = {g: t[0] for g, t in needs.items()}
+
+        # everyday increment = everyday - life (never negative)
+        every_inc = {g: max(0, t[1]) for g, t in needs.items()}
+
+        # luxury increment = luxury - everyday (never negative)
+        lux_inc = {g: max(0, t[2]) for g, t in needs.items()}
+
+        # 1) life
+        B = tier_cost_and_fill(life_targets, B)
+        if B <= 0:
+            return demand
+
+        # 2) everyday increment
+        B = tier_cost_and_fill(every_inc, B)
+        if B <= 0:
+            return demand
+
+        # 3) luxury increment
+        B = tier_cost_and_fill(lux_inc, B)
+        return demand
+
+    def demand_per_good(
+            self,
+            prices: Dict[gds.GoodID, float],
+            good: gds.GoodID) -> int:
+        return self.demand_for_all_goods(prices)[good]
+
+    def buy_for_good(
+        self,
+        good: gds.GoodID,
+        price: float,
+        available_q: int,
+        remaining_budget: float,
+) -> tuple[int, str, dict[str, int], float]:
+        """
+        Buy for a single good in tier order using remaining_budget.
+        Returns: (total_bought, label, tier_breakdown, remaining_budget_after)
+        """
+        p = max(0.01, float(price))
+        avail = int(max(0, available_q))
+        B = float(max(0.0, remaining_budget))
+
+        # Needs for this good
         q_life, q_every, q_lux = self.needs_per_good(good)
+        # Convert to increments (never negative)
+        inc_life  = q_life
+        inc_every = max(0, q_every)
+        inc_lux   = max(0, q_lux )
 
         tiers = {"life": 0, "everyday": 0, "luxury": 0}
 
-        tiers["life"] = min(q_life, can_buy); can_buy -= tiers["life"]
-        if tiers["life"] < q_life:
+        def buy(q_target: int) -> int:
+            """Buy up to q_target, limited by availability and budget. Return bought qty."""
+            nonlocal B, avail
+            if q_target <= 0 or avail <= 0 or B < p:
+                return 0
+            max_by_budget = int(B // p)           # whole units we can afford
+            q = min(q_target, avail, max_by_budget)
+            if q > 0:
+                B -= q * p
+                avail -= q
+            return q
+
+        # 1) Life tier
+        tiers["life"] = buy(inc_life)
+        if tiers["life"] < inc_life:
             return sum(tiers.values()), "life_partial", tiers
 
-        tiers["everyday"] = min(q_every, can_buy); can_buy -= tiers["everyday"]
-        if tiers["everyday"] < q_every:
+        # 2) Everyday increment
+        tiers["everyday"] = buy(inc_every)
+        if tiers["everyday"] < inc_every:
             return sum(tiers.values()), "life", tiers
 
-        tiers["luxury"] = min(q_lux, can_buy)
-        label = "luxury" if tiers["luxury"] >= q_lux else "everyday"
+        # 3) Luxury increment
+        tiers["luxury"] = buy(inc_lux)
+        label = "luxury" if tiers["luxury"] >= inc_lux else "everyday"
+
         return sum(tiers.values()), label, tiers

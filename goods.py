@@ -10,6 +10,7 @@ class TierNeeds(TypedDict):
     everyday: float
     luxury: float
 
+# NEEDS PER 100 POPULATION
 NEEDS_PER_GOOD: Dict[GoodID, TierNeeds] = {
     'bread' : {'life': 30, 'everyday': 50, 'luxury': 100}
 }
