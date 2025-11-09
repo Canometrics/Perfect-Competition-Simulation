@@ -51,26 +51,47 @@ class Market:
         # 3) Aggregating supply
         return int(sum(f.q for f in self.firms))
 
-    def _clear_market(self, pop: Population, q_supply: int) -> Tuple[int, str, Dict[str, int], Dict[int, float]]:
-        # 4) Realized purchases at price with supply constraint
-        q_bought, tier_realized, tiers_bought = pop.buy_for_good(
-            good=self.good,
-            price=self.price,
-            available_q=q_supply,
-            remaining_budget=pop.budget
-            )
+    def _clear_market(
+        self, desired_q: int, q_supply: int, needs: tuple[int, int, int]
+    ) -> tuple[int, str, dict[str, int], dict[int, float]]:
+        # quantity actually bought
+        q_bought = min(int(desired_q), int(q_supply))
 
-        # 5) Allocate sales proportionally by supply
-        """
-        Demand may not always be the same as quantity. In this step, the quantity actually bought by consumers is distributed as sales to firms.
-        If a firm produced x% of the good, they receive x% of the sales
-        """
+        # derive tier caps from needs
+        q_life, q_every, q_lux = needs
+        inc_every = max(0, q_every - q_life)
+        inc_lux   = max(0, q_lux   - q_every)
+
+        # allocate bought units into tiers
+        life_bought = min(q_bought, q_life)
+        rem = q_bought - life_bought
+        every_bought = min(rem, inc_every)
+        rem -= every_bought
+        lux_bought = min(rem, inc_lux)
+
+        tiers_bought = {
+            "life": life_bought,
+            "everyday": every_bought,
+            "luxury": lux_bought,
+        }
+
+        # label of highest fully reached tier
+        if life_bought < q_life:
+            tier_realized = "life_partial"
+        elif every_bought < inc_every:
+            tier_realized = "life"
+        elif lux_bought < inc_lux:
+            tier_realized = "everyday"
+        else:
+            tier_realized = "luxury"
+
+        # proportional allocation of sales to firms
         sales_by_firm: Dict[int, float] = {f.id: 0.0 for f in self.firms}
         if q_supply > 0:
             for f in self.firms:
                 share = (f.q / q_supply)
-                # Single good per firm, so set not accumulate
                 sales_by_firm[f.id] = min(f.q, share * q_bought)
+
         return q_bought, tier_realized, tiers_bought, sales_by_firm
     
         # add inventory for unsold goods
@@ -110,12 +131,23 @@ class Market:
 
         return next_id
 
-    def _price_update(self, q_demand: int, q_supply: int) -> None:
+    def _price_update1(self, q_demand: int, q_supply: int) -> None:
         # 8) Price update with inertia (tatonnement + smoothing), sets price for next tick, since all other actions are done
         excess = q_demand - q_supply
         p_target = max(0.01, self.price + cfg.tatonnement_speed * excess)
-        alpha = max(0.0, min(1.0, float(cfg.price_alpha)))  # clamp
-        self.price = max(0.01, (1 - alpha) * self.price + alpha * p_target)
+        self.price = max(0.01, (1 - cfg.price_alpha) * self.price + cfg.price_alpha * p_target)
+
+    def _price_update(self, q_demand: int, q_supply: int) -> None:
+        # Percentage excess: how much demand exceeds supply relative to supply level
+        excess_pct = (q_demand - q_supply) / max(1, q_supply)
+        excess_pct = max(-0.9, min(2.0, excess_pct))
+
+        # Tatonnement target based on *percentage* imbalance
+        p_target = max(0.01, self.price * (1 +  cfg.tatonnement_speed * excess_pct))
+
+        # Exponential smoothing towards target
+        self.price = max(0.01, (1 - cfg.price_alpha) * self.price + cfg.price_alpha * p_target)
+
 
     def _apply_shocks(self, tick: int) -> None:
         # 9) Shocks
@@ -141,33 +173,18 @@ class Market:
                 if f.base_MC is not None:
                     f.MC = float(f.base_MC)
 
-    def step(self, pop: Population, demand: Tuple[int, int, int], rng_entry: np.random.Generator, tick: int, records: List[Dict], good_label_in_record: bool = False) -> int:
-        """
-        Runs one tick for this market, pushes one record to `records`, and returns updated next_id (if entries happen).
-        The caller must pass and track `next_id`.
-        """
-        # 1..3
-        q_demand = demand
+    def step(self, pop: Population, demand: int, rng_entry: np.random.Generator,
+            tick: int, records: List[Dict], good_label_in_record: bool = False) -> int:
+
+        q_demand = int(demand)
         self._update_firms(tick)
         q_supply = self._supply()
 
-        # 4..5
-        q_bought, tier_realized, tiers_bought, sales_by_firm = self._clear_market(pop, q_supply)
-
-        # 6
+        needs = pop.needs_per_good(self.good)  # (life, everyday, luxury)
+        q_bought, tier_realized, tiers_bought, sales_by_firm = self._clear_market(q_demand, q_supply, needs)
         TR_total, TC_total, Profit_total = self._book_finance(sales_by_firm)
-
-        # inactive cleanup
         self._remove_inactive()
 
-        # entry
-        # we do not know next_id here; caller provides and receives it back
-        # so we return the updated id
-        # price update and shocks happen regardless of entry
-        # record before shocks so prices recorded correspond to current tick decision
-        # (same as your original flow)
-        # we will set next_id in caller after this returns
-        # 7) Record
         rec = {
             "tick": tick,
             "price": self.price,
@@ -187,11 +204,6 @@ class Market:
             rec["good"] = self.good
         records.append(rec)
 
-        # 8) price update
         self._price_update(q_demand, q_supply)
-
-        # 9) shocks
         self._apply_shocks(tick)
-
-        # return profit for entry probability and let caller update next_id
         return Profit_total

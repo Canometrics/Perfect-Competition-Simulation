@@ -2,10 +2,10 @@
 # ---------------- CONFIG ----------------
 SEED = 7
 T = 200                 # ticks
-tatonnement_speed = 0.007         # price adjustment speed
-price_alpha = 0.3       # price smoothing factor (to avoid jiggery prices)
-p0 = 15.0               # initial price
-ADJ_RATE = 0.04
+tatonnement_speed = 0.8        # price adjustment speed
+price_alpha = 0.3       # price smoothing factor (to avoid extremely jagged prices)
+p0 = 9.0               # initial price
+ADJ_RATE = 0.3
 
 # Population config
 POP_SIZE = 1000
@@ -18,7 +18,7 @@ N_FIRMS = 30
 # FC ~ lognormal, MC ~ normal clipped, capacity ~ uniform
 FC_LOGMEAN, FC_LOGSD = 2.0, 0.6      # exp draw, scale FC (multiplied by 20)
 MC_MEAN, MC_SD = 7.5, 1.5            # mean MC near the price region
-CAP_LOW, CAP_HIGH = 80, 500          # capacity range per firm
+CAP_LOW, CAP_HIGH = 20, 100          # capacity range per firm
 LOSS_SHUTDOWN_TICKS = 15             # if loss for this many consecutive ticks, shutdown
 
 # ----- SHOCK TIMING -----

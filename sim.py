@@ -33,16 +33,19 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
     # MAIN LOOP
     for t in range(T + 1):
         prices = {g: markets[g].price for g in goods}
-        demand = pop.demand_for_all_goods(prices)
+        demand = {
+            g: int(pop.demand_for_all_goods(prices)[g])
+            for g in goods
+            } 
 
         for g in goods:
             profit = markets[g].step(
                 pop=pop,
-                demand = demand[g],
                 rng_entry=rng_entry,
                 tick=t,
                 records=records,
                 good_label_in_record=(len(goods) > 1),
+                demand=demand[g]
             )
             # entry after we have profit computed
             next_id = markets[g]._entry(rng_entry=rng_entry, next_id=next_id, tick_profit=profit)

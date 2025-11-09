@@ -3,7 +3,7 @@ from typing import List, Dict, TypedDict
 GoodID = str
 Goods = List[GoodID]
 
-GOODS: Goods = ['bread']
+GOODS: Goods = ['bread', 'butter']
 
 class TierNeeds(TypedDict):
     life: float
@@ -12,5 +12,6 @@ class TierNeeds(TypedDict):
 
 # NEEDS PER 100 POPULATION
 NEEDS_PER_GOOD: Dict[GoodID, TierNeeds] = {
-    'bread' : {'life': 30, 'everyday': 50, 'luxury': 100}
+    'bread' : {'life': 30, 'everyday': 50, 'luxury': 100},
+    'butter': {'life': 30, 'everyday': 50, 'luxury': 100}
 }

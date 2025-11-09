@@ -123,17 +123,17 @@ class Population:
         q_life, q_every, q_lux = self.needs_per_good(good)
         # Convert to increments (never negative)
         inc_life  = q_life
-        inc_every = max(0, q_every)
-        inc_lux   = max(0, q_lux )
+        inc_every = q_every
+        inc_lux   = q_lux
 
-        tiers = {"life": 0, "everyday": 0, "luxury": 0}
+        tiers_satisfied = {"life": 0, "everyday": 0, "luxury": 0}
 
         def buy(q_target: int) -> int:
             """Buy up to q_target, limited by availability and budget. Return bought qty."""
             nonlocal B, avail
             if q_target <= 0 or avail <= 0 or B < p:
                 return 0
-            max_by_budget = int(B // p)           # whole units we can afford
+            max_by_budget = math.floor(B // p)           # whole units we can afford
             q = min(q_target, avail, max_by_budget)
             if q > 0:
                 B -= q * p
@@ -141,17 +141,17 @@ class Population:
             return q
 
         # 1) Life tier
-        tiers["life"] = buy(inc_life)
-        if tiers["life"] < inc_life:
-            return sum(tiers.values()), "life_partial", tiers
+        tiers_satisfied["life"] = buy(inc_life)
+        if tiers_satisfied["life"] < inc_life:
+            return sum(tiers_satisfied.values()), "life_partial", tiers_satisfied
 
         # 2) Everyday increment
-        tiers["everyday"] = buy(inc_every)
-        if tiers["everyday"] < inc_every:
-            return sum(tiers.values()), "life", tiers
+        tiers_satisfied["everyday"] = buy(inc_every)
+        if tiers_satisfied["everyday"] < inc_every:
+            return sum(tiers_satisfied.values()), "life", tiers_satisfied
 
         # 3) Luxury increment
-        tiers["luxury"] = buy(inc_lux)
-        label = "luxury" if tiers["luxury"] >= inc_lux else "everyday"
+        tiers_satisfied["luxury"] = buy(inc_lux)
+        label = "luxury" if tiers_satisfied["luxury"] >= inc_lux else "everyday"
 
-        return sum(tiers.values()), label, tiers
+        return sum(tiers_satisfied.values()), label, tiers_satisfied

@@ -31,26 +31,31 @@ class Firm:
         ]
     ))
 
+    @property
+    def last_quantity(self) -> Optional[float]:
+        if len(self.history) == 0:
+            return None
+        return float(self.history.iloc[-1]["quantity"])
+
     def __post_init__(self):
         # Seed treasury from start_capital at creation
         if self.treasury == 0.0 and self.start_capital != 0.0:
             self.treasury = float(self.start_capital)
 
-    def _last_quantity(self) -> Optional[float]:
-        if len(self.history) == 0:
-            return None
-        return float(self.history.iloc[-1]["quantity"])
-
     def decide_target(self, price: float) -> float:
         if not self.active:
             return 0.0
-        # Price-taking logic with constant MC: produce at capacity if P > MC; else 0
-        if price > self.MC:
-            return self.capacity
-        elif price < self.MC:
-            return 0.0
-        else:
-            return self.q
+
+        c = self.capacity
+
+        if self.last_quantity == None:
+            return c * 0.05
+        # Different production levels based on profitability
+        if price <= self.MC:
+            return max(0,self.last_quantity - c * 0.1)
+        elif price >= self.MC:
+            return min(self.last_quantity + c * 0.1, c)
+
 
     def update_quantity(self, price: float, tick: int) -> None:
         # make nothing if shut down
@@ -65,11 +70,10 @@ class Firm:
         # return positive output if operating
         target = self.decide_target(price)
         q_proposed = float(np.clip(self.q + cfg.ADJ_RATE * (target - self.q), 0.0, self.capacity)) # clip s.t. not over capacity & not 0
-
-        # Freeze tiny changes to reduce oscillation
-        last_q = self._last_quantity()
-        if last_q is not None and last_q > 0 and abs(q_proposed - last_q) / last_q < 0.05:
-            q_proposed = last_q
+        # # Freeze tiny changes to reduce oscillation
+        # last_q = self.last_quantity
+        # if last_q is not None and last_q > 0 and abs(q_proposed - last_q) / last_q < 0.05:
+        #     q_proposed = last_q
 
         self.q = q_proposed
         self.history.loc[len(self.history)] = {

@@ -21,7 +21,7 @@ with st.sidebar:
     p0 = st.number_input("Initial price p0", min_value=0.01, value=float(cfg.p0), step=0.5, format="%.2f")
     tatonnement_speed = st.number_input(
         "Price adjustment speed",
-        min_value=0.0001, max_value=0.5,
+        min_value=0.0001, max_value=1.0,
         value=float(getattr(cfg, "tatonnement_speed", 0.007)),
         step=0.001, format="%.4f"
     )
@@ -31,7 +31,7 @@ with st.sidebar:
         value=float(getattr(cfg, "price_alpha", 0.30)),
         step=0.1, format="%.4f"
     )
-    ADJ_RATE = st.number_input("Quantity adj. rate (ADJ_RATE)", min_value=0.0001, max_value=0.5, value=float(cfg.ADJ_RATE), step=0.001, format="%.4f")
+    ADJ_RATE = st.number_input("Quantity adj. rate (ADJ_RATE)", min_value=0.0001, max_value=1.0, value=float(cfg.ADJ_RATE), step=0.001, format="%.4f")
 
     st.markdown("---")
     st.subheader("Population")
@@ -90,188 +90,122 @@ def set_config():
     cfg.START_CAPITAL = float(START_CAPITAL)
     cfg.TREASURY_GRACE_TICKS = int(TREASURY_GRACE_TICKS)
 
+# =========================
+# Run
+# =========================
 if run_btn:
-    # Push sidebar values to config and reload sim to capture `from config import ...` constants
+    # 1) push sidebar values into cfg
     set_config()
+
+    # 2) optional but helpful if any submodules did `from config import ...`
     importlib.reload(sim_module)
 
-    with st.spinner("Simulating..."):
+    with st.spinner("Simulating…"):
         df_market, firms = sim_module.simulate_multi(T=cfg.T, p0=cfg.p0)
-
     st.success("Done!")
 
-    # ====== Plots ======
-    has_good = "good" in df_market.columns
+    # =========================
+    # Helper: split by good if present
+    # =========================
+    def _groups(df: pd.DataFrame):
+        if "good" in df.columns and df["good"].nunique() > 1:
+            return [(str(g), d.sort_values("tick")) for g, d in df.groupby("good", sort=False)]
+        return [("Market", df.sort_values("tick"))]
 
-    # ---------- Aggregate view (for multi-good) ----------
-    if has_good:
-        st.subheader("Aggregate (all goods combined)")
-        agg = (
-            df_market.groupby("tick", as_index=False)
-            .agg({
-                "q_demand": "sum",
-                "q_realized": "sum",
-                "q_supply": "sum",
-                "profit_total": "sum",
-                "active_firms": "sum",
-            })
-        )
+    groups = _groups(df_market)
+    tabs = st.tabs([name for name, _ in groups])
 
-        cA1, cA2 = st.columns(2)
-        with cA1:
-            st.caption("Quantities (sum across goods)")
-            fig, ax = plt.subplots()
-            ax.plot(agg["tick"], agg["q_demand"], label="Quantity Demanded")
-            ax.plot(agg["tick"], agg["q_realized"], label="Quantity Bought")
-            ax.plot(agg["tick"], agg["q_supply"],  label="Quantity Supplied")
-            ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
-            ax.set_xlabel("Tick"); ax.set_ylabel("Units"); ax.legend(); ax.set_title("Quantities")
-            st.pyplot(fig)
+    for tab, (name, df_g) in zip(tabs, groups):
+        with tab:
+            st.caption(f"Good: {name}")
 
-        with cA2:
-            st.caption("Total Profit (sum across goods)")
-            fig, ax = plt.subplots()
-            ax.plot(agg["tick"], agg["profit_total"], label="Total Profit")
-            ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
-            ax.set_xlabel("Tick"); ax.set_ylabel("Profit"); ax.legend(); ax.set_title("Profit")
-            st.pyplot(fig)
-
-        cA3, _ = st.columns(2)
-        with cA3:
-            st.caption("Active Firms (sum across goods)")
-            fig, ax = plt.subplots()
-            ax.plot(agg["tick"], agg["active_firms"], label="Active Firms")
-            ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
-            ax.set_xlabel("Tick"); ax.set_ylabel("Count"); ax.legend(); ax.set_title("Active Firms")
-            st.pyplot(fig)
-
-    # ---------- Per-good view ----------
-    if has_good:
-        goods_list = [str(g) for g in sorted(df_market["good"].unique())]
-        st.subheader("Per-good plots")
-        tabs = st.tabs(goods_list)
-
-        tier_to_level = {"life_partial":0, "life":1, "everyday":2, "luxury":3}
-        level_names = ["Partial Life", "Life", "Everyday", "Luxury"]
-
-        for tab, g in zip(tabs, goods_list):
-            with tab:
-                df_g = df_market[df_market["good"].astype(str) == g]
-
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.caption(f"Quantities – {g}")
-                    fig, ax = plt.subplots()
+            c1, c2 = st.columns(2)
+            with c1:
+                st.subheader("Quantities over time")
+                fig, ax = plt.subplots()
+                if "q_demand" in df_g.columns:
                     ax.plot(df_g["tick"], df_g["q_demand"], label="Quantity Demanded")
+                if "q_realized" in df_g.columns:
                     ax.plot(df_g["tick"], df_g["q_realized"], label="Quantity Bought")
-                    ax.plot(df_g["tick"], df_g["q_supply"],  label="Quantity Supplied")
-                    ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
-                    ax.set_xlabel("Tick"); ax.set_ylabel("Units"); ax.legend(); ax.set_title("Quantities")
-                    st.pyplot(fig)
+                if "q_supply" in df_g.columns:
+                    ax.plot(df_g["tick"], df_g["q_supply"], label="Quantity Supplied")
+                ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
+                ax.set_xlabel("Tick"); ax.set_ylabel("Units"); ax.legend(); ax.set_title("Quantities")
+                ax.grid(True)
+                st.pyplot(fig)
 
-                with c2:
-                    st.caption(f"Price – {g}")
-                    fig, ax = plt.subplots()
+            with c2:
+                st.subheader("Price over time")
+                fig, ax = plt.subplots()
+                if "price" in df_g.columns:
                     ax.plot(df_g["tick"], df_g["price"], label="Price")
-                    ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
-                    ax.set_xlabel("Tick"); ax.set_ylabel("Price"); ax.legend(); ax.set_title("Price")
-                    st.pyplot(fig)
+                ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
+                ax.set_xlabel("Tick"); ax.set_ylabel("Price"); ax.legend(); ax.set_title("Price")
+                ax.grid(True)
+                st.pyplot(fig)
 
-                c3, c4 = st.columns(2)
-                with c3:
-                    st.caption(f"Total Profit – {g}")
-                    fig, ax = plt.subplots()
+            c3, c4 = st.columns(2)
+            with c3:
+                st.subheader("Total Profit")
+                fig, ax = plt.subplots()
+                if "profit_total" in df_g.columns:
                     ax.plot(df_g["tick"], df_g["profit_total"], label="Total Profit")
-                    ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
-                    ax.set_xlabel("Tick"); ax.set_ylabel("Profit"); ax.legend(); ax.set_title("Profit")
-                    st.pyplot(fig)
+                ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
+                ax.set_xlabel("Tick"); ax.set_ylabel("Profit"); ax.legend(); ax.set_title("Profit")
+                ax.grid(True)
+                st.pyplot(fig)
 
-                with c4:
-                    st.caption(f"Active Firms – {g}")
-                    fig, ax = plt.subplots()
+            with c4:
+                st.subheader("Active Firms")
+                fig, ax = plt.subplots()
+                if "active_firms" in df_g.columns:
                     ax.plot(df_g["tick"], df_g["active_firms"], label="Active Firms")
-                    ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
-                    ax.set_xlabel("Tick"); ax.set_ylabel("Count"); ax.legend(); ax.set_title("Active Firms")
-                    st.pyplot(fig)
+                ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
+                ax.set_xlabel("Tick"); ax.set_ylabel("Count"); ax.legend(); ax.set_title("Active Firms")
+                ax.grid(True)
+                st.pyplot(fig)
 
-                # Tier ladder (realized) for this good
-                if "tier_realized" in df_g.columns:
-                    st.caption(f"Highest Spending Tier Reached (Realized) – {g}")
-                    lvl_real = df_g["tier_realized"].map(tier_to_level).fillna(0)
-                    fig, ax = plt.subplots()
-                    ax.plot(df_g["tick"], lvl_real, drawstyle="steps-post", linestyle="--", label="Realized")
-                    ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
-                    ax.set_yticks([0,1,2,3], labels=level_names)
-                    ax.set_xlabel("Tick"); ax.set_ylabel("Tier level"); ax.set_title("Spending Tier")
-                    ax.legend(); ax.grid(True)
-                    st.pyplot(fig)
+            # Per-good realized spending tier (optional view)
+            if "tier_realized" in df_g.columns:
+                st.subheader("Highest Spending Tier Reached (Realized, per-good)")
+                tier_to_level = {"life_partial": 0, "life": 1, "everyday": 2, "luxury": 3}
+                level_names = ["Partial Life", "Life", "Everyday", "Luxury"]
+                lvl_real = df_g["tier_realized"].map(tier_to_level).fillna(0)
+                fig, ax = plt.subplots()
+                ax.plot(df_g["tick"], lvl_real, drawstyle="steps-post", linestyle="--", label="Realized")
+                ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
+                ax.set_yticks([0, 1, 2, 3], labels=level_names)
+                ax.set_xlabel("Tick"); ax.set_ylabel("Tier level"); ax.set_title("Spending Tier (per-good)")
+                ax.legend(); ax.grid(True)
+                st.pyplot(fig)
 
-    # ---------- Single-good fallback (original layout) ----------
-    if not has_good:
-        c1, c2 = st.columns(2)
-        with c1:
-            st.subheader("Quantities over time")
-            fig, ax = plt.subplots()
-            ax.plot(df_market["tick"], df_market["q_demand"], label="Quantity Demanded")
-            ax.plot(df_market["tick"], df_market["q_realized"], label="Quantity Bought")
-            ax.plot(df_market["tick"], df_market["q_supply"], label="Quantity Supplied")
-            ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
-            ax.set_xlabel("Tick"); ax.set_ylabel("Units"); ax.legend(); ax.set_title("Quantities")
-            st.pyplot(fig)
-
-        with c2:
-            st.subheader("Price over time")
-            fig, ax = plt.subplots()
-            ax.plot(df_market["tick"], df_market["price"], label="Price")
-            ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
-            ax.set_xlabel("Tick"); ax.set_ylabel("Price"); ax.legend(); ax.set_title("Price")
-            st.pyplot(fig)
-
-        c3, c4 = st.columns(2)
-        with c3:
-            st.subheader("Total Profit")
-            fig, ax = plt.subplots()
-            ax.plot(df_market["tick"], df_market["profit_total"], label="Total Profit")
-            ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
-            ax.set_xlabel("Tick"); ax.set_ylabel("Profit"); ax.legend(); ax.set_title("Profit")
-            st.pyplot(fig)
-
-        with c4:
-            st.subheader("Active Firms")
-            fig, ax = plt.subplots()
-            ax.plot(df_market["tick"], df_market["active_firms"], label="Active Firms")
-            ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
-            ax.set_xlabel("Tick"); ax.set_ylabel("Count"); ax.legend(); ax.set_title("Active Firms")
-            st.pyplot(fig)
-
-        if "tier_realized" in df_market.columns:
-            st.subheader("Highest Spending Tier Reached (Realized)")
-            tier_to_level = {"life_partial":0, "life":1, "everyday":2, "luxury":3}
-            level_names = ["Partial Life", "Life", "Everyday", "Luxury"]
-            lvl_real = df_market["tier_realized"].map(tier_to_level).fillna(0)
-            fig, ax = plt.subplots()
-            ax.plot(df_market["tick"], lvl_real, drawstyle="steps-post", linestyle="--", label="Realized")
-            ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
-            ax.set_yticks([0,1,2,3], labels=level_names)
-            ax.set_xlabel("Tick"); ax.set_ylabel("Tier level"); ax.set_title("Spending Tier")
-            ax.legend(); ax.grid(True)
-            st.pyplot(fig)
-
-    # Tier ladder (realized)
+    # =========================
+    # NEW: Combined spending-tier plot (all goods together)
+    # - Both goods equally important -> overall tier is the minimum tier across goods at each tick.
+    # =========================
     if "tier_realized" in df_market.columns:
-        st.subheader("Highest Spending Tier Reached (Realized)")
-        tier_to_level = {"life_partial":0, "life":1, "everyday":2, "luxury":3}
-        level_names = ["Partial Life", "Life", "Everyday", "Luxury"]
-        lvl_real = df_market["tier_realized"].map(tier_to_level).fillna(0)
+        st.subheader("Spending Tier (combined across goods)")
+        tier_to_level = {"life_partial": 0, "life": 1, "everyday": 2, "luxury": 3}
+        labels = ["Partial Life", "Life", "Everyday", "Luxury"]
+
+        df_tier = df_market[["tick", "good", "tier_realized"]].copy()
+        df_tier["level"] = df_tier["tier_realized"].map(tier_to_level).fillna(0)
+
+        # For each tick, take the minimum level across goods (bottleneck logic)
+        combined = df_tier.groupby("tick", as_index=False)["level"].min()
+
         fig, ax = plt.subplots()
-        ax.plot(df_market["tick"], lvl_real, drawstyle="steps-post", linestyle="--", label="Realized")
+        ax.plot(combined["tick"], combined["level"], drawstyle="steps-post", linestyle="--", label="Combined (min across goods)")
         ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
-        ax.set_yticks([0,1,2,3], labels=level_names)
-        ax.set_xlabel("Tick"); ax.set_ylabel("Tier level"); ax.set_title("Spending Tier")
+        ax.set_yticks([0, 1, 2, 3], labels=labels)
+        ax.set_xlabel("Tick"); ax.set_ylabel("Tier level")
+        ax.set_title("Highest Spending Tier Reached (Combined)")
         ax.legend(); ax.grid(True)
         st.pyplot(fig)
 
-    # Treasury plots (if recorded)
+    # =========================
+    # Treasury & firm snapshots (aggregate)
+    # =========================
     if "treasury_total" in df_market.columns:
         c5, c6 = st.columns(2)
         with c5:
@@ -294,36 +228,47 @@ if run_btn:
             ax.grid(True)
             st.pyplot(fig)
 
-    # Data + download
+    # =========================
+    # Data (all ticks) + download
+    # =========================
     st.header("Data")
-    st.dataframe(df_market)
+    st.dataframe(df_market)  # show all ticks
     csv = df_market.to_csv(index=False).encode("utf-8")
-    st.download_button("Download CSV", data=csv, file_name="simulation_results_multi.csv", mime="text/csv")
+    st.download_button("Download market CSV", data=csv, file_name="market_timeseries.csv", mime="text/csv")
 
-    # Final snapshot table
-    st.subheader("Final firm snapshot")
+    # =========================
+    # Final firm snapshot
+    # =========================
+    st.header("Final firm snapshot")
     last_rows = []
     for f in firms:
-        h = f.history
-        if len(h) == 0:
+        if getattr(f, "history", None) is None or len(f.history) == 0:
             continue
-        last = h.iloc[-1]
+        last = f.history.iloc[-1]
         row = {
-            "firm": f.id,
-            "good": f.good,
-            "active": f.active,
-            "FC": round(f.FC, 2),
-            "MC": round(f.MC, 2),
-            "capacity": round(f.capacity, 2),
-            "q_final": round(float(last["quantity"]), 2),
-            "profit_final": round(float(last["profit"]), 2),
+            "id": getattr(f, "id", None),
+            "active": bool(getattr(f, "active", True)),
+            "MC": round(float(getattr(f, "MC", 0.0)), 4),
+            "FC": round(float(getattr(f, "FC", 0.0)), 2),
+            "capacity": round(float(getattr(f, "capacity", 0.0)), 2),
+            "q_final": round(float(last.get("quantity", 0.0)), 2),
+            "profit_final": round(float(last.get("profit", 0.0)), 2),
         }
         if hasattr(f, "treasury"):
             row["treasury"] = round(float(getattr(f, "treasury", 0.0)), 2)
         last_rows.append(row)
+
     if last_rows:
         df_final = pd.DataFrame(last_rows).sort_values(["active", "profit_final"], ascending=[False, False])
         st.dataframe(df_final)
-        st.download_button("Download firm snapshot CSV", data=df_final.to_csv(index=False), file_name="firms_final.csv", mime="text/csv")
+        st.download_button(
+            "Download firm snapshot CSV",
+            data=df_final.to_csv(index=False).encode("utf-8"),
+            file_name="firms_final.csv",
+            mime="text/csv",
+        )
     else:
         st.write("No firm records.")
+
+else:
+    st.info("Set parameters in the sidebar and click “Run simulation”.")
