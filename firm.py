@@ -1,11 +1,16 @@
 from dataclasses import dataclass, field
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List, Dict
 import pandas as pd
 import numpy as np
-from typing import List
 
 import config as cfg
 import goods as gds
+
+_HISTORY_COLS = [
+    "tick", "quantity", "price",
+    "revenue", "cost", "profit",
+    "active", "treasury"
+]
 
 @dataclass
 class Firm:
@@ -25,20 +30,27 @@ class Firm:
     treasury: float = 0.0
     neg_treasury_streak: int = 0
 
-    history: pd.DataFrame = field(default_factory=lambda: pd.DataFrame(
-        columns=[
-            "tick", "quantity", "price", "revenue", "cost", "profit", "active", "treasury"
-        ]
-    ))
+    # history replaced with list buffer
+    _rows: List[Dict] = field(default_factory=list, repr=False)
+
+    _cached_df: Optional[pd.DataFrame] = field(default=None, repr=False)
+    _last_quantity: Optional[float] = None
 
     @property
     def last_quantity(self) -> Optional[float]:
-        if len(self.history) == 0:
-            return None
-        return float(self.history.iloc[-1]["quantity"])
+        return self._last_quantity
+
+    @property
+    def history(self) -> pd.DataFrame:
+        """Materialize if needed, but read-only during simulation."""
+        if self._cached_df is None:
+            if self._rows:
+                self._cached_df = pd.DataFrame.from_records(self._rows, columns=_HISTORY_COLS)
+            else:
+                self._cached_df = pd.DataFrame(columns=_HISTORY_COLS)
+        return self._cached_df
 
     def __post_init__(self):
-        # Seed treasury from start_capital at creation
         if self.treasury == 0.0 and self.start_capital != 0.0:
             self.treasury = float(self.start_capital)
 
@@ -48,70 +60,68 @@ class Firm:
 
         c = self.capacity
 
-        if self.last_quantity == None:
+        if self.last_quantity is None:
             return c * 0.05
-        # Different production levels based on profitability
+
         if price <= self.MC:
-            return max(0,self.last_quantity - c * 0.1)
-        elif price >= self.MC:
+            return max(0.0, self.last_quantity - c * 0.1)
+        else:
             return min(self.last_quantity + c * 0.1, c)
 
+    def _log_tick(self, tick: int, price: float, q: float):
+        self._rows.append({
+            "tick": tick,
+            "quantity": float(q),
+            "price": float(price),
+            "revenue": 0.0,
+            "cost": 0.0,
+            "profit": 0.0,
+            "active": bool(self.active),
+            "treasury": float(self.treasury),
+        })
+        self._cached_df = None  # invalidate cache
 
     def update_quantity(self, price: float, tick: int) -> None:
-        # make nothing if shut down
         if not self.active:
             self.q = 0.0
-            self.history.loc[len(self.history)] = {
-                "tick": tick, "quantity": self.q, "price": price,
-                "revenue": 0.0, "cost": 0.0, "profit": 0.0, "active": self.active, "treasury": self.treasury
-            } # initialize new bookkeeping entry for firm
+            self._log_tick(tick, price, self.q)
+            self._last_quantity = self.q
             return
 
-        # return positive output if operating
         target = self.decide_target(price)
-        q_proposed = float(np.clip(self.q + cfg.ADJ_RATE * (target - self.q), 0.0, self.capacity)) # clip s.t. not over capacity & not 0
-        # # Freeze tiny changes to reduce oscillation
-        # last_q = self.last_quantity
-        # if last_q is not None and last_q > 0 and abs(q_proposed - last_q) / last_q < 0.05:
-        #     q_proposed = last_q
-
-        self.q = q_proposed
-        self.history.loc[len(self.history)] = {
-            "tick": tick, "quantity": self.q, "price": price,
-            "revenue": 0.0, "cost": 0.0, "profit": 0.0, "active": self.active, "treasury": self.treasury
-        } # initialize new bookkeeping entry for firm
+        q_new = float(np.clip(self.q + cfg.ADJ_RATE * (target - self.q), 0.0, self.capacity))
+        self.q = q_new
+        self._log_tick(tick, price, self.q)
+        self._last_quantity = self.q
 
     def book_finance(self, price: float, sales: float) -> Tuple[float, float, float]:
         TR = price * sales
         VC = self.MC * sales
         TC = self.FC + VC
         profit = TR - TC
-        # write finance
-        self.history.loc[self.history.index[-1], ["revenue", "cost", "profit"]] = [TR, TC, profit]
 
-        # update treasury
         self.treasury += profit
-        self.history.loc[self.history.index[-1], "treasury"] = self.treasury
 
-        # Track consecutive negative-treasury ticks
         if self.treasury < 0:
             self.neg_treasury_streak += 1
         else:
             self.neg_treasury_streak = 0
 
-        # Shutdown if negative treasury persists for grace period
         if self.neg_treasury_streak >= cfg.TREASURY_GRACE_TICKS:
             self.active = False
 
-        # reflect active flag
-        self.history.loc[self.history.index[-1], "active"] = self.active
+        row = self._rows[-1]
+        row["revenue"] = float(TR)
+        row["cost"] = float(TC)
+        row["profit"] = float(profit)
+        row["active"] = bool(self.active)
+        row["treasury"] = float(self.treasury)
+
+        self._cached_df = None  # invalidate cache
         return TR, TC, profit
 
 
-
-# helper to spawn firms
-def spawn_firms(good: gds.GoodID, rng: np.random.Generator, n: int,start_id: int = 0, ) -> List[Firm]:
-    """Vectorized firm creation for both initial seeding and late entry."""
+def spawn_firms(good: gds.GoodID, rng: np.random.Generator, n: int, start_id: int = 0) -> List[Firm]:
     FC  = 20.0 * np.exp(rng.normal(cfg.FC_LOGMEAN, cfg.FC_LOGSD, size=n))
     MC  = np.clip(rng.normal(cfg.MC_MEAN, cfg.MC_SD, size=n), 0.5, None)
     CAP = rng.uniform(cfg.CAP_LOW, cfg.CAP_HIGH, size=n)
@@ -124,7 +134,7 @@ def spawn_firms(good: gds.GoodID, rng: np.random.Generator, n: int,start_id: int
             base_capacity=float(CAP[i]),
             capacity=int(CAP[i]),
             q=0.0,
-            good = good,
+            good=good,
             start_capital=float(cfg.START_CAPITAL)
         )
         for i in range(n)

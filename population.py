@@ -69,10 +69,10 @@ class Population:
                 if total_cost > 0:
                     f = budget / total_cost
                 else:
-                    f = 0.0
+                    f = 0
                 for g, q, _p in valid:
                     demand[g] += f * q
-                return 0.0
+                return 0
 
         # Build tier targets
         # life = life

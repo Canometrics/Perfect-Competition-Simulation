@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import importlib
+import time
 
 # Local modules
 import config as cfg
@@ -101,8 +102,12 @@ if run_btn:
     importlib.reload(sim_module)
 
     with st.spinner("Simulating…"):
+        t0 = time.perf_counter()
         df_market, firms = sim_module.simulate_multi(T=cfg.T, p0=cfg.p0)
+        runtime_s = time.perf_counter() - t0
     st.success("Done!")
+    # Show runtime on the page
+    st.metric("Runtime", f"{runtime_s:.3f} s")
 
     # =========================
     # Helper: split by good if present
