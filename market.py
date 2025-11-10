@@ -51,6 +51,28 @@ class Market:
         # 3) Aggregating supply
         return int(sum(f.q for f in self.firms))
 
+    def _hhi(self, sales_by_firm: Dict[int, float], fallback_supply: int) -> float:
+        """
+        HHI on 0–10000 scale using sales shares this tick.
+        If no sales happened, fallback to shares of supply (q) to avoid NaN.
+        """
+        # try based on sales
+        total = sum(sales_by_firm.values())
+        if total <= 0:
+            # fallback: use supply shares this tick
+            if fallback_supply <= 0:
+                return 0.0
+            shares = [(f.q / fallback_supply) for f in self.firms if f.q > 0 and f.active]
+        else:
+            shares = [(v / total) for v in sales_by_firm.values() if v > 0]
+
+        if not shares:
+            return 0.0
+
+        # standard HHI in "points": sum of squared percentage shares
+        # (e.g., monopoly -> 100^2 = 10,000)
+        return float(sum((100.0 * s) ** 2 for s in shares))
+
     def _clear_market(
         self, desired_q: int, q_supply: int, needs: tuple[int, int, int]
     ) -> tuple[int, str, dict[str, int], dict[int, float]]:
@@ -185,6 +207,8 @@ class Market:
         TR_total, TC_total, Profit_total = self._book_finance(sales_by_firm)
         self._remove_inactive()
 
+        hhi = self._hhi(sales_by_firm, q_supply)
+
         rec = {
             "tick": tick,
             "price": self.price,
@@ -198,6 +222,7 @@ class Market:
             "revenue_total": TR_total,
             "cost_total": TC_total,
             "profit_total": Profit_total,
+            "hhi": hhi,
             "active_firms": sum(1 for f in self.firms if f.active),
         }
         if good_label_in_record:

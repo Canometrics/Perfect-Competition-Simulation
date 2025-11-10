@@ -170,19 +170,30 @@ if run_btn:
                 ax.grid(True)
                 st.pyplot(fig)
 
-            # Per-good realized spending tier (optional view)
-            if "tier_realized" in df_g.columns:
-                st.subheader("Highest Spending Tier Reached (Realized, per-good)")
-                tier_to_level = {"life_partial": 0, "life": 1, "everyday": 2, "luxury": 3}
-                level_names = ["Partial Life", "Life", "Everyday", "Luxury"]
-                lvl_real = df_g["tier_realized"].map(tier_to_level).fillna(0)
+            with c4:
+                st.subheader("HHI (0–10,000)")
                 fig, ax = plt.subplots()
-                ax.plot(df_g["tick"], lvl_real, drawstyle="steps-post", linestyle="--", label="Realized")
+                if "hhi" in df_g.columns:
+                    ax.plot(df_g["tick"], df_g["hhi"], label="HHI")
                 ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
-                ax.set_yticks([0, 1, 2, 3], labels=level_names)
-                ax.set_xlabel("Tick"); ax.set_ylabel("Tier level"); ax.set_title("Spending Tier (per-good)")
-                ax.legend(); ax.grid(True)
+                ax.set_xlabel("Tick"); ax.set_ylabel("HHI"); ax.legend(); ax.set_title("Concentration")
+                ax.grid(True)
                 st.pyplot(fig)
+
+
+            # # Per-good realized spending tier (optional view)
+            # if "tier_realized" in df_g.columns:
+            #     st.subheader("Highest Spending Tier Reached (Realized, per-good)")
+            #     tier_to_level = {"life_partial": 0, "life": 1, "everyday": 2, "luxury": 3}
+            #     level_names = ["Partial Life", "Life", "Everyday", "Luxury"]
+            #     lvl_real = df_g["tier_realized"].map(tier_to_level).fillna(0)
+            #     fig, ax = plt.subplots()
+            #     ax.plot(df_g["tick"], lvl_real, drawstyle="steps-post", linestyle="--", label="Realized")
+            #     ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
+            #     ax.set_yticks([0, 1, 2, 3], labels=level_names)
+            #     ax.set_xlabel("Tick"); ax.set_ylabel("Tier level"); ax.set_title("Spending Tier (per-good)")
+            #     ax.legend(); ax.grid(True)
+            #     st.pyplot(fig)
 
     # =========================
     # NEW: Combined spending-tier plot (all goods together)
