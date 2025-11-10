@@ -30,7 +30,6 @@ class Firm:
     treasury: float = 0.0
     neg_treasury_streak: int = 0
 
-    # history replaced with list buffer
     _rows: List[Dict] = field(default_factory=list, repr=False)
 
     _cached_df: Optional[pd.DataFrame] = field(default=None, repr=False)
@@ -54,19 +53,6 @@ class Firm:
         if self.treasury == 0.0 and self.start_capital != 0.0:
             self.treasury = float(self.start_capital)
 
-    def decide_target(self, price: float) -> float:
-        if not self.active:
-            return 0.0
-
-        c = self.capacity
-
-        if self.last_quantity is None:
-            return c * 0.05
-
-        if price <= self.MC:
-            return max(0.0, self.last_quantity - c * 0.1)
-        else:
-            return min(self.last_quantity + c * 0.1, c)
 
     def _log_tick(self, tick: int, price: float, q: float):
         self._rows.append({
@@ -83,16 +69,57 @@ class Firm:
 
     def update_quantity(self, price: float, tick: int) -> None:
         if not self.active:
-            self.q = 0.0
-            self._log_tick(tick, price, self.q)
-            self._last_quantity = self.q
+            self.q = 0
+            # self._log_tick(tick, price, self.q)
+            # self._last_quantity = self.q
             return
 
-        target = self.decide_target(price)
-        q_new = float(np.clip(self.q + cfg.ADJ_RATE * (target - self.q), 0.0, self.capacity))
-        self.q = q_new
+        c = self.capacity
+
+        # First production tick: start low
+        if self.last_quantity is None:
+            target = int(c * 0.02)
+
+        # Price below or equal to marginal cost → scale down
+        elif price <= self.MC:
+            target = max(0.0, self.last_quantity - c * 0.02)
+
+        # Price above marginal cost → scale up
+        else:
+            target = min(self.last_quantity + c * 0.02, c)
+
+        # Set final quantity (integer, capped)
+        self.q = int(np.clip(target, 0.0, c))
+
         self._log_tick(tick, price, self.q)
         self._last_quantity = self.q
+
+    # old quantity method
+    # def update_quantity(self, price: float, tick: int) -> None:
+    #     if not self.active:
+    #         self.q = 0.0
+    #         self._log_tick(tick, price, self.q)
+    #         self._last_quantity = self.q
+    #         return
+
+    #     c = self.capacity
+
+    #     # --- old decide_target() logic inlined ---
+    #     if self.last_quantity is None:
+    #         target = c * 0.05
+    #     elif price <= self.MC:
+    #         target = max(0.0, self.last_quantity - c * 0.1)
+    #     else:
+    #         target = min(self.last_quantity + c * 0.1, c)
+
+    #     # --- old update_quantity gradual adjustment ---
+    #     q_new = float(np.clip(self.q + cfg.ADJ_RATE * (target - self.q), 0.0, c))
+    #     self.q = q_new
+
+    #     # log + update memory
+    #     self._log_tick(tick, price, self.q)
+    #     self._last_quantity = self.q
+
 
     def book_finance(self, price: float, sales: float) -> Tuple[float, float, float]:
         TR = price * sales
