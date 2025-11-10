@@ -21,6 +21,8 @@ class Firm:
     capacity: int
     q: float
 
+    province: str
+
     base_MC: Optional[float] = None
     base_capacity: Optional[float] = None
 
@@ -78,7 +80,7 @@ class Firm:
 
         # First production tick: start low
         if self.last_quantity is None:
-            target = int(c * 0.02)
+            target = int(c * 0.1)
 
         # Price below or equal to marginal cost → scale down
         elif price <= self.MC:
@@ -148,7 +150,14 @@ class Firm:
         return TR, TC, profit
 
 
-def spawn_firms(good: gds.GoodID, rng: np.random.Generator, n: int, start_id: int = 0) -> List[Firm]:
+def spawn_firms(
+        good: gds.GoodID,
+        rng: np.random.Generator,
+        n: int,
+        start_id: int = 0,
+        province: str = "National",        # <-- new arg (default keeps old behavior)
+
+        ) -> List[Firm]:
     FC  = 20.0 * np.exp(rng.normal(cfg.FC_LOGMEAN, cfg.FC_LOGSD, size=n))
     MC  = np.clip(rng.normal(cfg.MC_MEAN, cfg.MC_SD, size=n), 0.5, None)
     CAP = rng.uniform(cfg.CAP_LOW, cfg.CAP_HIGH, size=n)
@@ -162,6 +171,7 @@ def spawn_firms(good: gds.GoodID, rng: np.random.Generator, n: int, start_id: in
             capacity=int(CAP[i]),
             q=0.0,
             good=good,
+            province=province,
             start_capital=float(cfg.START_CAPITAL)
         )
         for i in range(n)

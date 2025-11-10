@@ -13,28 +13,42 @@ from firm import Firm, spawn_firms
 
 @dataclass
 class Market:
-    """
-    A per-good market that encapsulates:
-      - price
-      - demand calculation
-      - firm quantity updates
-      - supply aggregation
-      - proportional sales allocation
-      - finance booking
-      - entry/exit and shocks
-      - per-tick record generation
-    """
     good: gds.GoodID
     price: float
+    # NEW: national market knows how to distribute firms over provinces
+    province_weights: Dict[str, float] = field(default_factory=dict)
     firms: List[Firm] = field(default_factory=list)
-
-    # Internal state
     profit_hist: deque[float] = field(default_factory=lambda: deque(maxlen=cfg.ENTRY_WINDOW))
 
+    def _sample_province(self, rng: np.random.Generator) -> str:
+        if not self.province_weights:
+            return "National"
+        names = list(self.province_weights.keys())
+        probs = np.array([self.province_weights[n] for n in names], dtype=float)
+        probs = probs / probs.sum()
+        return str(rng.choice(names, p=probs))
+
     def seed(self, rng_init: np.random.Generator, n_firms: int, start_id: int) -> int:
-        batch = spawn_firms(good=self.good, rng=rng_init, n=n_firms, start_id=start_id)
-        self.firms.extend(batch)
-        return start_id + len(batch)
+        # split initial firms by weights
+        if not self.province_weights:
+            batch = spawn_firms(self.good, rng_init, n=n_firms, start_id=start_id, province="National")
+            self.firms.extend(batch)
+            return start_id + len(batch)
+
+        names = list(self.province_weights.keys())
+        probs = np.array([self.province_weights[n] for n in names], dtype=float)
+        probs = probs / probs.sum()
+
+        # multinomial draw for counts per province
+        counts = np.random.default_rng(rng_init.integers(0, 2**31-1)).multinomial(n=n_firms, pvals=probs)
+        nid = start_id
+        for name, count in zip(names, counts):
+            if count <= 0:
+                continue
+            batch = spawn_firms(self.good, rng_init, n=count, start_id=nid, province=name)
+            self.firms.extend(batch)
+            nid += count
+        return nid
 
     #legacy
     # def _demand(self, pop: Population) -> Tuple[int, str]:
@@ -134,20 +148,20 @@ class Market:
         if any(not f.active for f in self.firms):
             self.firms = [f for f in self.firms if f.active]
 
-    def _entry(self, rng_entry: np.random.Generator, next_id: int, tick_profit: float) -> int:
-        # Bookkeping: Update profit values for new firm entry window, remove old ones (those before the profit window)
+    def _entry(self, rng_entry: np.random.Generator, next_id: int, tick_profit: float, active_firms: int):
         self.profit_hist.append(tick_profit)
 
-        # Bookkeeping: track market
-        active_now = sum(1 for f in self.firms if f.active) or 1
+        active_now = active_firms or 1   # <-- USE WHAT step() ALREADY COUNTED
         avg_profit_per_firm = (np.mean(self.profit_hist) / active_now) if self.profit_hist else 0.0
         profit_pos = max(avg_profit_per_firm, 0.0)
-        p_entry = 1.0 - math.exp(-cfg.ENTRY_ALPHA * profit_pos)  # probability of entry at current profit levels
+        p_entry = 1.0 - math.exp(-cfg.ENTRY_ALPHA * profit_pos)
 
-        # calculate market entrants
-        for _ in range(cfg.ENTRY_MAX_PER_TICK):
-            if rng_entry.random() < p_entry:  # introduce randomness into how many firms enter
-                entrant = spawn_firms(good=self.good, rng=rng_entry, n=1, start_id=next_id)[0]  # fn returns list so get 1st entry
+        max_new = max(1, int(active_firms * cfg.ENTRY_MAX_PER_TICK))
+
+        for _ in range(max_new):
+            if rng_entry.random() < p_entry:
+                province = self._sample_province(rng_entry)
+                entrant = spawn_firms(self.good, rng_entry, n=1, start_id=next_id, province=province)[0]
                 self.firms.append(entrant)
                 next_id += 1
 
@@ -195,14 +209,26 @@ class Market:
                 if f.base_MC is not None:
                     f.MC = float(f.base_MC)
 
-    def step(self, pop: Population, demand: int, rng_entry: np.random.Generator,
-            tick: int, records: List[Dict], good_label_in_record: bool = False) -> int:
-
+    def step(self,
+             pop: Population,
+             demand: int,
+             rng_entry: np.random.Generator,
+             tick: int,
+             records: List[Dict],
+             good_label_in_record: bool = False
+             ) -> int:
+        
+        # NATIONAL: 'pop' can be a Country; we only use pop.needs_per_good(self.good)
         q_demand = int(demand)
+
         self._update_firms(tick)
         q_supply = self._supply()
 
-        needs = pop.needs_per_good(self.good)  # (life, everyday, luxury)
+        active_firms = sum(1 for f in self.firms if f.active)
+
+        # national needs thresholds (life, everyday, luxury)
+        needs = pop.needs_per_good(self.good)
+
         q_bought, tier_realized, tiers_bought, sales_by_firm = self._clear_market(q_demand, q_supply, needs)
         TR_total, TC_total, Profit_total = self._book_finance(sales_by_firm)
         self._remove_inactive()
@@ -223,7 +249,7 @@ class Market:
             "cost_total": TC_total,
             "profit_total": Profit_total,
             "hhi": hhi,
-            "active_firms": sum(1 for f in self.firms if f.active),
+            "active_firms": active_firms,
         }
         if good_label_in_record:
             rec["good"] = self.good

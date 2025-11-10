@@ -1,8 +1,15 @@
-
 import streamlit as st
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+
+# You can keep these imports if you plan to use plots.py helpers elsewhere,
+# but below we draw province charts inline for Streamlit-friendly rendering.
+from plots import (
+    plot_market, plot_tier_ladder,
+    plot_province_demand, plot_province_realized, plot_province_shares_stacked
+)
+
 import importlib
 import time
 
@@ -35,16 +42,16 @@ with st.sidebar:
     ADJ_RATE = st.number_input("Quantity adj. rate (ADJ_RATE)", min_value=0.0001, max_value=1.0, value=float(cfg.ADJ_RATE), step=0.001, format="%.4f")
 
     st.markdown("---")
-    st.subheader("Population")
+    st.subheader("Population (national defaults; provinces can override in province_details.py)")
     POP_SIZE = st.number_input("Population size", min_value=100, max_value=1_000_000, value=int(cfg.POP_SIZE), step=100)
     INCOME_PC = st.number_input("Income per 100 people", min_value=0.0, value=float(cfg.INCOME_PC), step=50.0)
 
     st.markdown("---")
-    st.subheader("Firms & Entry")
+    st.subheader("Firms and Entry")
     N_FIRMS = st.number_input("Initial # firms", min_value=1, max_value=10000, value=int(cfg.N_FIRMS), step=1)
     ENTRY_ALPHA = st.number_input("Entry alpha", min_value=0.0, max_value=0.1, value=float(cfg.ENTRY_ALPHA), step=0.0005, format="%.4f")
     ENTRY_WINDOW = st.number_input("Entry window (ticks)", min_value=1, max_value=200, value=int(cfg.ENTRY_WINDOW), step=1)
-    ENTRY_MAX_PER_TICK = st.number_input("Entry max per tick", min_value=0, max_value=50, value=int(cfg.ENTRY_MAX_PER_TICK), step=1)
+    ENTRY_MAX_PER_TICK = st.number_input("Entry max per tick (pct of all firms)", min_value=0.0, max_value=1.0, value=float(cfg.ENTRY_MAX_PER_TICK), step=0.01)
 
     st.markdown("---")
     st.subheader("Shock")
@@ -78,7 +85,7 @@ def set_config():
     cfg.N_FIRMS = int(N_FIRMS)
     cfg.ENTRY_ALPHA = float(ENTRY_ALPHA)
     cfg.ENTRY_WINDOW = int(ENTRY_WINDOW)
-    cfg.ENTRY_MAX_PER_TICK = int(ENTRY_MAX_PER_TICK)
+    cfg.ENTRY_MAX_PER_TICK = float(ENTRY_MAX_PER_TICK)
 
     cfg.SHOCK_TICK = int(SHOCK_TICK)
     cfg.SHOCK_DURATION = int(SHOCK_DURATION)
@@ -103,10 +110,10 @@ if run_btn:
 
     with st.spinner("Simulating…"):
         t0 = time.perf_counter()
-        df_market, firms = sim_module.simulate_multi(T=cfg.T, p0=cfg.p0)
+        # Updated to receive df_province from simulate_multi
+        df_market, firms, df_province = sim_module.simulate_multi(T=cfg.T, p0=cfg.p0)
         runtime_s = time.perf_counter() - t0
     st.success("Done!")
-    # Show runtime on the page
     st.metric("Runtime", f"{runtime_s:.3f} s")
 
     # =========================
@@ -180,24 +187,9 @@ if run_btn:
                 ax.grid(True)
                 st.pyplot(fig)
 
-
-            # # Per-good realized spending tier (optional view)
-            # if "tier_realized" in df_g.columns:
-            #     st.subheader("Highest Spending Tier Reached (Realized, per-good)")
-            #     tier_to_level = {"life_partial": 0, "life": 1, "everyday": 2, "luxury": 3}
-            #     level_names = ["Partial Life", "Life", "Everyday", "Luxury"]
-            #     lvl_real = df_g["tier_realized"].map(tier_to_level).fillna(0)
-            #     fig, ax = plt.subplots()
-            #     ax.plot(df_g["tick"], lvl_real, drawstyle="steps-post", linestyle="--", label="Realized")
-            #     ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
-            #     ax.set_yticks([0, 1, 2, 3], labels=level_names)
-            #     ax.set_xlabel("Tick"); ax.set_ylabel("Tier level"); ax.set_title("Spending Tier (per-good)")
-            #     ax.legend(); ax.grid(True)
-            #     st.pyplot(fig)
-
     # =========================
-    # NEW: Combined spending-tier plot (all goods together)
-    # - Both goods equally important -> overall tier is the minimum tier across goods at each tick.
+    # Combined spending-tier plot (all goods together)
+    # Both goods equally important -> overall tier is the minimum tier across goods at each tick.
     # =========================
     if "tier_realized" in df_market.columns:
         st.subheader("Spending Tier (combined across goods)")
@@ -220,16 +212,86 @@ if run_btn:
         st.pyplot(fig)
 
     # =========================
-    # Treasury & firm snapshots (aggregate)
+    # Province views (demand, realized, and stacked shares)
+    # =========================
+    if isinstance(df_province, pd.DataFrame) and not df_province.empty:
+        st.header("Provinces")
+
+        # Split by good for province charts if multiple goods exist
+        def _groups_prov(df: pd.DataFrame):
+            if "good" in df.columns and df["good"].nunique() > 1:
+                return [(str(g), d.sort_values(["tick", "province"])) for g, d in df.groupby("good", sort=False)]
+            return [("Market", df.sort_values(["tick", "province"]))]
+
+        prov_groups = _groups_prov(df_province)
+        prov_tabs = st.tabs([name for name, _ in prov_groups])
+
+        for tab, (name, df_p) in zip(prov_tabs, prov_groups):
+            with tab:
+                st.caption(f"Good: {name}")
+
+                # Line plot of per-province demand
+                st.subheader("Province demand over time")
+                prov_names = list(df_p["province"].unique())
+                fig, ax = plt.subplots()
+                for prov in prov_names:
+                    d = df_p[df_p["province"] == prov]
+                    ax.plot(d["tick"], d["q_demand"], label=f"{prov}")
+                ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
+                ax.set_xlabel("Tick"); ax.set_ylabel("Units")
+                ax.set_title("Demand by province")
+                ax.legend(ncols=2, fontsize=8)
+                ax.grid(True)
+                st.pyplot(fig)
+
+                # Line plot of per-province realized quantity
+                if "q_realized" in df_p.columns:
+                    st.subheader("Province realized purchases over time")
+                    fig, ax = plt.subplots()
+                    for prov in prov_names:
+                        d = df_p[df_p["province"] == prov]
+                        ax.plot(d["tick"], d["q_realized"], label=f"{prov}")
+                    ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
+                    ax.set_xlabel("Tick"); ax.set_ylabel("Units")
+                    ax.set_title("Realized purchases by province")
+                    ax.legend(ncols=2, fontsize=8)
+                    ax.grid(True)
+                    st.pyplot(fig)
+
+                # Stacked shares over time (demand)
+                st.subheader("Provincial demand shares")
+                piv = df_p.pivot_table(index="tick", columns="province", values="q_demand", aggfunc="sum").fillna(0.0)
+                totals = piv.sum(axis=1).replace(0, 1.0)
+                shares = piv.div(totals, axis=0)
+                fig, ax = plt.subplots()
+                shares.plot.area(ax=ax)
+                ax.set_xlabel("Tick"); ax.set_ylabel("Share")
+                ax.set_ylim(0, 1)
+                ax.set_title("Demand shares (stacked)")
+                ax.legend(title="Province", bbox_to_anchor=(1.04, 1), loc="upper left")
+                st.pyplot(fig)
+
+        # Province table and download
+        with st.expander("Province panel data"):
+            st.dataframe(df_province)
+            st.download_button(
+                "Download province CSV",
+                data=df_province.to_csv(index=False).encode("utf-8"),
+                file_name="province_timeseries.csv",
+                mime="text/csv",
+            )
+
+    # =========================
+    # Treasury and firm snapshots (aggregate)
     # =========================
     if "treasury_total" in df_market.columns:
         c5, c6 = st.columns(2)
         with c5:
-            st.subheader("Aggregate Treasury & Negative-Firm Count")
+            st.subheader("Aggregate Treasury and Negative-Firm Count")
             fig, ax = plt.subplots()
             ax.plot(df_market["tick"], df_market["treasury_total"], label="Total Treasury")
             if "neg_treasury_firms" in df_market.columns:
-                ax.plot(df_market["tick"], df_market["neg_treasury_firms"], label="# Firms < 0 Treasury")
+                ax.plot(df_market["tick"], df_market["neg_treasury_firms"], label="# Firms with negative treasury")
             ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
             ax.set_xlabel("Tick"); ax.set_ylabel("Value"); ax.legend(); ax.grid(True)
             st.pyplot(fig)
@@ -245,9 +307,9 @@ if run_btn:
             st.pyplot(fig)
 
     # =========================
-    # Data (all ticks) + download
+    # Data (all ticks) and downloads
     # =========================
-    st.header("Data")
+    st.header("Market data")
     st.dataframe(df_market)  # show all ticks
     csv = df_market.to_csv(index=False).encode("utf-8")
     st.download_button("Download market CSV", data=csv, file_name="market_timeseries.csv", mime="text/csv")
@@ -263,6 +325,8 @@ if run_btn:
         last = f.history.iloc[-1]
         row = {
             "id": getattr(f, "id", None),
+            "province": getattr(f, "province", "National"),
+            "good": getattr(f, "good", None),
             "active": bool(getattr(f, "active", True)),
             "MC": round(float(getattr(f, "MC", 0.0)), 4),
             "FC": round(float(getattr(f, "FC", 0.0)), 2),
@@ -287,4 +351,4 @@ if run_btn:
         st.write("No firm records.")
 
 else:
-    st.info("Set parameters in the sidebar and click “Run simulation”.")
+    st.info("Set parameters in the sidebar and click Run simulation.")

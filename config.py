@@ -1,7 +1,7 @@
 
 # ---------------- CONFIG ----------------
 SEED = 7
-T = 200                 # ticks
+T = 600                 # ticks
 tatonnement_speed = 0.8        # price adjustment speed
 price_alpha = 0.3       # price smoothing factor (to avoid extremely jagged prices)
 p0 = 9.0               # initial price
@@ -12,7 +12,7 @@ POP_SIZE = 1000
 INCOME_PC = 900         # income per 100 ppl per tick
 
 # Firm config
-N_FIRMS = 30
+N_FIRMS = 60
 
 # Draws for firm heterogeneity
 # FC ~ lognormal, MC ~ normal clipped, capacity ~ uniform
@@ -36,7 +36,7 @@ USE_MC_SHOCK = True
 # ----- ENTRY -----
 ENTRY_ALPHA = 0.002          # controls steepness of Pr(entry)
 ENTRY_WINDOW = 8             # lookback window (ticks) for avg profit
-ENTRY_MAX_PER_TICK = 3       # cap entrants per tick
+ENTRY_MAX_PER_TICK = 0.1       # cap entrants per tick
 
 
 # ----- TREASURY / CAPITAL BUFFER -----
