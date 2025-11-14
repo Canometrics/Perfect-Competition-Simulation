@@ -26,7 +26,6 @@ with st.sidebar:
     # Core
     seed = st.number_input("Seed", min_value=0, value=cfg.SEED, step=1)
     T = st.number_input("Ticks (T)", min_value=10, max_value=2000, value=cfg.T, step=10)
-    p0 = st.number_input("Initial price p0", min_value=0.01, value=float(cfg.p0), step=0.5, format="%.2f")
     tatonnement_speed = st.number_input(
         "Price adjustment speed",
         min_value=0.0001, max_value=1.0,
@@ -39,12 +38,6 @@ with st.sidebar:
         value=float(getattr(cfg, "price_alpha", 0.30)),
         step=0.1, format="%.4f"
     )
-    ADJ_RATE = st.number_input("Quantity adj. rate (ADJ_RATE)", min_value=0.0001, max_value=1.0, value=float(cfg.ADJ_RATE), step=0.001, format="%.4f")
-
-    st.markdown("---")
-    st.subheader("Population (national defaults; provinces can override in province_details.py)")
-    POP_SIZE = st.number_input("Population size", min_value=100, max_value=1_000_000, value=int(cfg.POP_SIZE), step=100)
-    INCOME_PC = st.number_input("Income per 100 people", min_value=0.0, value=float(cfg.INCOME_PC), step=50.0)
 
     st.markdown("---")
     st.subheader("Firms and Entry")
@@ -74,13 +67,8 @@ def set_config():
     # Assign chosen params to the config module
     cfg.SEED = seed
     cfg.T = int(T)
-    cfg.p0 = float(p0)
     cfg.tatonnement_speed = float(tatonnement_speed)
     cfg.price_alpha = float(price_alpha)
-    cfg.ADJ_RATE = float(ADJ_RATE)
-
-    cfg.POP_SIZE = int(POP_SIZE)
-    cfg.INCOME_PC = float(INCOME_PC)
 
     cfg.N_FIRMS = int(N_FIRMS)
     cfg.ENTRY_ALPHA = float(ENTRY_ALPHA)
@@ -111,7 +99,7 @@ if run_btn:
     with st.spinner("Simulating…"):
         t0 = time.perf_counter()
         # Updated to receive df_province from simulate_multi
-        df_market, firms, df_province = sim_module.simulate_multi(T=cfg.T, p0=cfg.p0)
+        df_market, firms, df_province = sim_module.simulate_multi(T=cfg.T)
         runtime_s = time.perf_counter() - t0
     st.success("Done!")
     st.metric("Runtime", f"{runtime_s:.3f} s")

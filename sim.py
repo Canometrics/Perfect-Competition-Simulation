@@ -12,7 +12,6 @@ from country import Country
 
 def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.DataFrame, List[Firm], pd.DataFrame]:
     T  = cfg.T if T is None else T
-    p0 = cfg.p0 if p0 is None else p0
 
     goods = gds.GOODS
 

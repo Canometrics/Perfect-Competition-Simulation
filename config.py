@@ -4,8 +4,6 @@ SEED = 7
 T = 600                 # ticks
 tatonnement_speed = 0.8        # price adjustment speed
 price_alpha = 0.3       # price smoothing factor (to avoid extremely jagged prices)
-p0 = 9.0               # initial price
-ADJ_RATE = 0.3
 
 # Population config
 POP_SIZE = 1000
