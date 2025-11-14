@@ -19,6 +19,14 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
     # Build Country (contains provinces -> Populations)
     specs = prov.PROVINCES
     country = Country.from_specs(specs)
+    province_map: Dict[str, prov.Province] = {p.name: p for p in specs}
+    # this is to easily refer to provinces by name in the future, gives:
+    # {
+    # "New York": <Province object>,
+    # "Los Angeles": <Province object>,
+    # "Chicago": <Province object>,
+    # }
+
 
     # RNGs
     rng_init  = np.random.default_rng(cfg.SEED)
@@ -32,8 +40,12 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
     # Seed initial firms, distributed over provinces by weights
     next_id = 0
     for g in goods:
-        next_id = markets[g].seed(rng_init, n_firms=cfg.N_FIRMS, start_id=next_id)
-
+        next_id = markets[g].seed(
+            rng_init,
+            n_firms=cfg.N_FIRMS,
+            start_id=next_id,
+            provinces=province_map,   # use Province objects
+        )
     records: List[Dict] = []
 
     prov_records: List[Dict] = []  # collect per-province panel rows
@@ -43,7 +55,7 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
         # current national prices per good
         prices: Dict[gds.GoodID, float] = {g: markets[g].price for g in goods}
 
-        # 1) per-province demand at these prices
+        # 1) per province demand for all goods
         demand_by_prov: Dict[str, Dict[gds.GoodID, int]] = {
             pname: country.provinces[pname].demand_for_all_goods(prices)
             for pname in country.provinces.keys()
@@ -75,8 +87,10 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
                 rng_entry=rng_entry,
                 next_id=next_id,
                 tick_profit=profit,
-                active_firms=active_firms,   # <-- YOU PASS IT IN NOW
+                active_firms=active_firms,
+                provinces=province_map,   # use Province objects
             )
+
 
         # 4) allocate realized to provinces by demand share, with exact reconciliation
         prov_names = list(country.provinces.keys())

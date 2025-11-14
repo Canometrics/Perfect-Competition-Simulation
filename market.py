@@ -8,53 +8,101 @@ import numpy as np
 import config as cfg
 import goods as gds
 from population import Population
-from firm import Firm, spawn_firms
+from firm import Firm, spawn_firms, FirmType
+from province import Province
 
 
 @dataclass
 class Market:
     good: gds.GoodID
     price: float
-    # NEW: national market knows how to distribute firms over provinces
+    # national market knows how to distribute firms over provinces
     province_weights: Dict[str, float] = field(default_factory=dict)
     firms: List[Firm] = field(default_factory=list)
     profit_hist: deque[float] = field(default_factory=lambda: deque(maxlen=cfg.ENTRY_WINDOW))
 
+    def __post_init__(self):
+    # initialize firm type from good type
+        if gds.is_raw(self.good):
+            self.firm_type = FirmType.RGO
+        else:
+            self.firm_type = FirmType.Manu
+
+
     def _sample_province(self, rng: np.random.Generator) -> str:
-        if not self.province_weights:
-            return "National"
         names = list(self.province_weights.keys())
         probs = np.array([self.province_weights[n] for n in names], dtype=float)
         probs = probs / probs.sum()
         return str(rng.choice(names, p=probs))
 
-    def seed(self, rng_init: np.random.Generator, n_firms: int, start_id: int) -> int:
+    def seed(
+        self,
+        rng_init: np.random.Generator,
+        n_firms: int,
+        start_id: int,
+        provinces: Dict[str, Province],        # <-- keep this
+    ) -> int:
         # split initial firms by weights
-        if not self.province_weights:
-            batch = spawn_firms(self.good, rng_init, n=n_firms, start_id=start_id, province="National")
-            self.firms.extend(batch)
-            return start_id + len(batch)
-
         names = list(self.province_weights.keys())
         probs = np.array([self.province_weights[n] for n in names], dtype=float)
         probs = probs / probs.sum()
 
         # multinomial draw for counts per province
-        counts = np.random.default_rng(rng_init.integers(0, 2**31-1)).multinomial(n=n_firms, pvals=probs)
+        counts = np.random.default_rng(rng_init.integers(0, 2**31 - 1)).multinomial(
+            n=n_firms, pvals=probs
+        )
         nid = start_id
+
         for name, count in zip(names, counts):
             if count <= 0:
                 continue
-            batch = spawn_firms(self.good, rng_init, n=count, start_id=nid, province=name)
+            province_obj = provinces[name]
+            batch = spawn_firms(
+                self.good,
+                self.firm_type,
+                rng_init,
+                n=count,
+                start_id=nid,
+                province=province_obj,
+            )
             self.firms.extend(batch)
             nid += count
+
         return nid
 
-    #legacy
-    # def _demand(self, pop: Population) -> Tuple[int, str]:
-    #     # 1) Aggregating demand
-    #     q_demand, tier_afford = pop.qty_demand_per_good(self.price, good=self.good)
-    #     return q_demand, tier_afford
+    def _entry(
+        self,
+        rng_entry: np.random.Generator,
+        next_id: int,
+        tick_profit: float,
+        active_firms: int,
+        provinces: Dict[str, Province],
+    ) -> int:
+        self.profit_hist.append(tick_profit)
+
+        active_now = active_firms or 1
+        avg_profit_per_firm = (np.mean(self.profit_hist) / active_now) if self.profit_hist else 0.0
+        profit_pos = max(avg_profit_per_firm, 0.0)
+        p_entry = 1.0 - math.exp(-cfg.ENTRY_ALPHA * profit_pos)
+
+        max_new = max(1, int(active_firms * cfg.ENTRY_MAX_PER_TICK))
+
+        for _ in range(max_new):
+            if rng_entry.random() < p_entry:
+                pname = self._sample_province(rng_entry)          # name string
+                province_obj = provinces[pname]                   # actual Province
+                entrant = spawn_firms(
+                    self.good,
+                    self.firm_type,
+                    rng_entry,
+                    n=1,
+                    start_id=next_id,
+                    province=province_obj,
+                )[0]
+                self.firms.append(entrant)
+                next_id += 1
+
+        return next_id
 
     def _update_firms(self, tick: int) -> None:
         # 2) Firms update quantities
@@ -95,8 +143,8 @@ class Market:
 
         # derive tier caps from needs
         q_life, q_every, q_lux = needs
-        inc_every = max(0, q_every - q_life)
-        inc_lux   = max(0, q_lux   - q_every)
+        inc_every = max(0, q_every)
+        inc_lux   = max(0, q_lux)
 
         # allocate bought units into tiers
         life_bought = min(q_bought, q_life)
@@ -147,31 +195,6 @@ class Market:
         # Bookkeeping: Remove inactive firms
         if any(not f.active for f in self.firms):
             self.firms = [f for f in self.firms if f.active]
-
-    def _entry(self, rng_entry: np.random.Generator, next_id: int, tick_profit: float, active_firms: int):
-        self.profit_hist.append(tick_profit)
-
-        active_now = active_firms or 1   # <-- USE WHAT step() ALREADY COUNTED
-        avg_profit_per_firm = (np.mean(self.profit_hist) / active_now) if self.profit_hist else 0.0
-        profit_pos = max(avg_profit_per_firm, 0.0)
-        p_entry = 1.0 - math.exp(-cfg.ENTRY_ALPHA * profit_pos)
-
-        max_new = max(1, int(active_firms * cfg.ENTRY_MAX_PER_TICK))
-
-        for _ in range(max_new):
-            if rng_entry.random() < p_entry:
-                province = self._sample_province(rng_entry)
-                entrant = spawn_firms(self.good, rng_entry, n=1, start_id=next_id, province=province)[0]
-                self.firms.append(entrant)
-                next_id += 1
-
-        return next_id
-
-    def _price_update1(self, q_demand: int, q_supply: int) -> None:
-        # 8) Price update with inertia (tatonnement + smoothing), sets price for next tick, since all other actions are done
-        excess = q_demand - q_supply
-        p_target = max(0.01, self.price + cfg.tatonnement_speed * excess)
-        self.price = max(0.01, (1 - cfg.price_alpha) * self.price + cfg.price_alpha * p_target)
 
     def _price_update(self, q_demand: int, q_supply: int) -> None:
         # Percentage excess: how much demand exceeds supply relative to supply level

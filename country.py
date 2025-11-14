@@ -14,10 +14,11 @@ class Country:
     @classmethod
     def from_specs(cls, specs: List[prov.Province]) -> "Country":
         pops = {
-            p["name"]: Population(size=p["pop_size"], income_pc=p["income_pc"])
+            p.name: Population(size=p.pop_size, income_pc=p.income_pc)  # Changed from p["name"] to p.name, etc.
             for p in specs
         }
-        return cls(provinces=pops, weights=prov.normalized_weights(specs))
+        weights = prov.normalized_weights(specs)  # This should now work with the fixed normalized_weights
+        return cls(provinces=pops, weights=weights)
 
     # NATIONAL demand: sum provincial demands at given prices
     def demand_for_all_goods(self, prices: Dict[gds.GoodID, float]) -> Dict[gds.GoodID, int]:

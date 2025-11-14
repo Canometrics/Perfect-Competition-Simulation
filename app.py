@@ -325,7 +325,7 @@ if run_btn:
         last = f.history.iloc[-1]
         row = {
             "id": getattr(f, "id", None),
-            "province": getattr(f, "province", "National"),
+            "province": getattr(f.province, "name", "National"),
             "good": getattr(f, "good", None),
             "active": bool(getattr(f, "active", True)),
             "MC": round(float(getattr(f, "MC", 0.0)), 4),

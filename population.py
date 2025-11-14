@@ -109,8 +109,8 @@ class Population:
         good: gds.GoodID,
         price: float,
         available_q: int,
-        remaining_budget: float,
-) -> tuple[int, str, dict[str, int], float]:
+        remaining_budget: float
+        ) -> tuple[int, str, dict[str, int], float]:
         """
         Buy for a single good in tier order using remaining_budget.
         Returns: (total_bought, label, tier_breakdown, remaining_budget_after)
