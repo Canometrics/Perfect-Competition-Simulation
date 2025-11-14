@@ -1,7 +1,7 @@
 from typing import Tuple, List, Dict
 import numpy as np
 import pandas as pd
-import math
+import copy
 
 import goods as gds
 import config as cfg
@@ -15,7 +15,7 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
     goods = gds.GOODS
 
     # Build Country (contains provinces -> Populations and Markets)
-    specs = prov.PROVINCES
+    specs = [copy.deepcopy(p) for p in prov.PROVINCES]
     country = Country.from_specs(specs)
 
     # map for province objects by name, used when seeding / entry assigns provinces
