@@ -6,54 +6,49 @@ import math
 import goods as gds
 import config as cfg
 from firm import Firm
-from market import Market
 import province as prov
 from country import Country
 
-def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.DataFrame, List[Firm]]:
+
+def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.DataFrame, List[Firm], pd.DataFrame]:
     T  = cfg.T if T is None else T
     p0 = cfg.p0 if p0 is None else p0
 
     goods = gds.GOODS
 
-    # Build Country (contains provinces -> Populations)
+    # Build Country (contains provinces -> Populations and Markets)
     specs = prov.PROVINCES
     country = Country.from_specs(specs)
-    province_map: Dict[str, prov.Province] = {p.name: p for p in specs}
-    # this is to easily refer to provinces by name in the future, gives:
-    # {
-    # "New York": <Province object>,
-    # "Los Angeles": <Province object>,
-    # "Chicago": <Province object>,
-    # }
 
+    # map for province objects by name, used when seeding / entry assigns provinces
+    province_map: Dict[str, prov.Province] = {p.name: p for p in specs}
+    # {
+    #   "New York": <Province object>,
+    #   "Los Angeles": <Province object>,
+    #   "Chicago": <Province object>,
+    # }
 
     # RNGs
     rng_init  = np.random.default_rng(cfg.SEED)
     rng_entry = np.random.default_rng(cfg.SEED + 1)
 
-    # NATIONAL markets (one per good), but with province weights for firm placement
-    markets: Dict[gds.GoodID, Market] = {
-        g: Market(good=g, price=p0, province_weights=country.weights) for g in goods
-    }
+    # Seed initial firms into the country's markets
+    next_id = country.seed_markets(
+        rng_init=rng_init,
+        province_map=province_map,
+        n_firms=cfg.N_FIRMS,
+        start_id=0,
+    )
 
-    # Seed initial firms, distributed over provinces by weights
-    next_id = 0
-    for g in goods:
-        next_id = markets[g].seed(
-            rng_init,
-            n_firms=cfg.N_FIRMS,
-            start_id=next_id,
-            provinces=province_map,   # use Province objects
-        )
     records: List[Dict] = []
-
     prov_records: List[Dict] = []  # collect per-province panel rows
 
     # MAIN LOOP
     for t in range(T + 1):
-        # current national prices per good
-        prices: Dict[gds.GoodID, float] = {g: markets[g].price for g in goods}
+        # current national prices per good from the country's markets
+        prices: Dict[gds.GoodID, float] = {
+            g: country.markets[g].price for g in goods
+        }
 
         # 1) per province demand for all goods
         demand_by_prov: Dict[str, Dict[gds.GoodID, int]] = {
@@ -66,11 +61,14 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
             g: sum(demand_by_prov[p][g] for p in demand_by_prov) for g in goods
         }
 
-        # 3) step national markets and capture realized totals per good
+        # 3) step country's markets and capture realized totals per good
         realized_nat: Dict[gds.GoodID, int] = {}
+
         for g in goods:
-            profit = markets[g].step(
-                pop=country,
+            market = country.markets[g]
+
+            profit = market.step(
+                pop=country,                        # Country provides needs_per_good
                 rng_entry=rng_entry,
                 tick=t,
                 records=records,
@@ -81,16 +79,15 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
             # pull data directly from record we just appended
             last = records[-1]
             realized_nat[g] = last["q_realized"]
-            active_firms = last["active_firms"]   # <-- HERE
+            active_firms = last["active_firms"]
 
-            next_id = markets[g]._entry(
+            next_id = market._entry(
                 rng_entry=rng_entry,
                 next_id=next_id,
                 tick_profit=profit,
                 active_firms=active_firms,
-                provinces=province_map,   # use Province objects
+                provinces=province_map,   # pass Province objects
             )
-
 
         # 4) allocate realized to provinces by demand share, with exact reconciliation
         prov_names = list(country.provinces.keys())
@@ -100,7 +97,9 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
                 # no national demand: everyone gets zero realized
                 for pname in prov_names:
                     prov_records.append({
-                        "tick": t, "province": pname, "good": g,
+                        "tick": t,
+                        "province": pname,
+                        "good": g,
                         "q_demand": int(demand_by_prov[pname][g]),
                         "q_realized": 0,
                     })
@@ -129,7 +128,7 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
                 })
 
     # collect firms and build df_province
-    firms: List[Firm] = [f for m in markets.values() for f in m.firms]
+    firms: List[Firm] = [f for m in country.markets.values() for f in m.firms]
     df_province = pd.DataFrame.from_records(prov_records)
 
     # annotate firm histories
@@ -137,4 +136,5 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
         f.history["good"] = f.good
         # province is on the Firm; you can add it into snapshots when you display
 
-    return pd.DataFrame.from_records(records), firms, df_province
+    df_market = pd.DataFrame.from_records(records)
+    return df_market, firms, df_province

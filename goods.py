@@ -18,8 +18,16 @@ class TierNeeds(TypedDict):
     everyday: float
     luxury: float
 
-# NEEDS PER 100 POPULATION
-NEEDS_PER_GOOD: Dict[GoodID, TierNeeds] = {
+INITIAL_PRICES: Dict[GoodID, float] = {
+    'bread': 5.0,
+    'grain': 2.0,
+}
+
+def initial_price(good: GoodID) -> float:
+    """Return the initial price for a given good."""
+    return INITIAL_PRICES[good]
+
+NEEDS_PER_GOOD: Dict[GoodID, TierNeeds] = { # NEEDS PER 100 POPULATION
     'bread' : {'life': 30, 'everyday': 50, 'luxury': 100},
     'grain' : {'life': 30, 'everyday': 50, 'luxury': 100},
 
