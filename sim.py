@@ -9,9 +9,8 @@ from firm import Firm
 import province as prov
 from country import Country
 
-
 def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.DataFrame, List[Firm], pd.DataFrame]:
-    T  = cfg.T if T is None else T
+    T = cfg.T if T is None else T
 
     goods = gds.GOODS
 
@@ -21,14 +20,9 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
 
     # map for province objects by name, used when seeding / entry assigns provinces
     province_map: Dict[str, prov.Province] = {p.name: p for p in specs}
-    # {
-    #   "New York": <Province object>,
-    #   "Los Angeles": <Province object>,
-    #   "Chicago": <Province object>,
-    # }
 
     # RNGs
-    rng_init  = np.random.default_rng(cfg.SEED)
+    rng_init = np.random.default_rng(cfg.SEED)
     rng_entry = np.random.default_rng(cfg.SEED + 1)
 
     # Seed initial firms into the country's markets
@@ -49,18 +43,49 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
             g: country.markets[g].price for g in goods
         }
 
-        # 1) per province demand for all goods
-        demand_by_prov: Dict[str, Dict[gds.GoodID, int]] = {
-            pname: country.provinces[pname].demand_for_all_goods(prices)
-            for pname in country.provinces.keys()
-        }
+        # 0) firms update their MC based on input prices
+        for g in goods:
+            market = country.markets[g]
+            for f in market.firms:
+                f.update_input_cost(prices)
 
-        # 2) national demand per good (sum over provinces)
-        demand_nat: Dict[gds.GoodID, int] = {
+        province_names = list(country.provinces.keys())
+        goods = gds.GOODS
+
+        # 1) national firm input-demand per good (based on planned output this tick)
+        input_demand_nat: Dict[gds.GoodID, float] = {g: 0.0 for g in goods}
+
+        for g_out in goods:
+            market = country.markets[g_out]
+            for firm in market.firms:
+                # only firms with input requirements (manufacturing) create input demand
+                if not getattr(firm, "input_requirements", None):
+                    continue
+
+                # how much output is this firm planning to produce at current price?
+                q_plan = firm.plan_quantity(price=market.price)
+
+                for g_in, units in firm.input_requirements.items():
+                    input_demand_nat[g_in] += q_plan * units
+
+        # 2) per province consumer demand for all goods (no firm demand here)
+        demand_by_prov: Dict[str, Dict[gds.GoodID, int]] = {}
+
+        for pname in province_names:
+            cons_d = country.provinces[pname].demand_for_all_goods(prices)
+            total_for_p: Dict[gds.GoodID, int] = {}
+            for g in goods:
+                q_cons = float(cons_d.get(g, 0))
+                # firm input demand is handled at national level, not per province
+                total_for_p[g] = int(q_cons)
+            demand_by_prov[pname] = total_for_p
+
+        # 3) national consumer demand per good (sum over provinces)
+        consumer_nat: Dict[gds.GoodID, int] = {
             g: sum(demand_by_prov[p][g] for p in demand_by_prov) for g in goods
         }
 
-        # 3) step country's markets and capture realized totals per good
+        # 4) step country's markets and capture realized totals per good using separate consumer vs firm demand
         realized_nat: Dict[gds.GoodID, int] = {}
 
         for g in goods:
@@ -68,12 +93,14 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
 
             profit = market.step(
                 pop=country,                        # Country provides needs_per_good
+                q_consumer=consumer_nat[g],
+                q_firm=input_demand_nat[g],
                 rng_entry=rng_entry,
                 tick=t,
                 records=records,
                 good_label_in_record=(len(goods) > 1),
-                demand=demand_nat[g],
             )
+
 
             # pull data directly from record we just appended
             last = records[-1]
@@ -88,12 +115,12 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
                 provinces=province_map,   # pass Province objects
             )
 
-        # 4) allocate realized to provinces by demand share, with exact reconciliation
+        # 6) allocate realized to provinces by consumer demand share, with exact reconciliation
         prov_names = list(country.provinces.keys())
         for g in goods:
-            d_nat = demand_nat[g]
-            if d_nat <= 0:
-                # no national demand: everyone gets zero realized
+            d_nat_cons = consumer_nat[g]
+            if d_nat_cons <= 0:
+                # no consumer demand: everyone gets zero realized in province records
                 for pname in prov_names:
                     prov_records.append({
                         "tick": t,
@@ -107,9 +134,9 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
             running_sum = 0
             alloc_rows: List[Tuple[str, int, int]] = []
             for i, pname in enumerate(prov_names):
-                d_p = int(demand_by_prov[pname][g])
+                d_p = int(demand_by_prov[pname][g])  # consumer-only demand
                 if i < len(prov_names) - 1:
-                    share = d_p / d_nat
+                    share = d_p / d_nat_cons
                     q_real_p = int(round(share * realized_nat[g]))
                     running_sum += q_real_p
                 else:

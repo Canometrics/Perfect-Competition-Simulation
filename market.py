@@ -64,6 +64,7 @@ class Market:
                 n=count,
                 start_id=nid,
                 province=province_obj,
+                max_share=0.7,
             )
             self.firms.extend(batch)
             nid += count
@@ -136,19 +137,46 @@ class Market:
         return float(sum((100.0 * s) ** 2 for s in shares))
 
     def _clear_market(
-        self, desired_q: int, q_supply: int, needs: tuple[int, int, int]
-    ) -> tuple[int, str, dict[str, int], dict[int, float]]:
-        # quantity actually bought
-        q_bought = min(int(desired_q), int(q_supply))
+        self,
+        cons_desired_q: int,
+        firm_desired_q: int,
+        q_supply: int,
+        needs: tuple[int, int, int],
+    ) -> tuple[int, int, str, dict[str, int], dict[int, float]]:
+        """
+        Clear the market given separate consumer and firm demand.
 
-        # derive tier caps from needs
+        - cons_desired_q: consumer demand for this good
+        - firm_desired_q: firm input demand for this good
+        - q_supply: total quantity supplied by firms this tick
+        - needs: (life, everyday, luxury) thresholds for CONSUMER only
+
+        Returns:
+            q_bought_total: total quantity bought (consumer + firm)
+            q_bought_consumer: quantity bought by consumers
+            tier_realized: label based on consumer tiers only
+            tiers_bought: dict of consumer quantities by tier
+            sales_by_firm: allocation of total sales to firms
+        """
+        cons_desired_q = int(max(0, cons_desired_q))
+        firm_desired_q = int(max(0, firm_desired_q))
+        q_supply = int(max(0, q_supply))
+
+        # Total demand that hits the market for pricing / sales
+        q_total_desired = cons_desired_q + firm_desired_q
+        q_bought_total = min(q_total_desired, q_supply)
+
+        # Consumers can never buy more than their own desired quantity
+        q_bought_consumer = min(cons_desired_q, q_bought_total)
+
+        # derive tier caps from needs (consumer side)
         q_life, q_every, q_lux = needs
         inc_every = max(0, q_every)
         inc_lux   = max(0, q_lux)
 
-        # allocate bought units into tiers
-        life_bought = min(q_bought, q_life)
-        rem = q_bought - life_bought
+        # allocate CONSUMER purchases into tiers
+        life_bought = min(q_bought_consumer, q_life)
+        rem = q_bought_consumer - life_bought
         every_bought = min(rem, inc_every)
         rem -= every_bought
         lux_bought = min(rem, inc_lux)
@@ -159,7 +187,7 @@ class Market:
             "luxury": lux_bought,
         }
 
-        # label of highest fully reached tier
+        # label of highest fully reached consumer tier
         if life_bought < q_life:
             tier_realized = "life_partial"
         elif every_bought < inc_every:
@@ -169,26 +197,37 @@ class Market:
         else:
             tier_realized = "luxury"
 
-        # proportional allocation of sales to firms
+        # proportional allocation of TOTAL sales (consumer + firm) to firms
         sales_by_firm: Dict[int, float] = {f.id: 0.0 for f in self.firms}
-        if q_supply > 0:
+        if q_supply > 0 and q_bought_total > 0:
             for f in self.firms:
-                share = (f.q / q_supply)
-                sales_by_firm[f.id] = min(f.q, share * q_bought)
+                if not f.active or f.q <= 0:
+                    continue
+                share = f.q / q_supply
+                sales_by_firm[f.id] = min(f.q, share * q_bought_total)
 
-        return q_bought, tier_realized, tiers_bought, sales_by_firm
-    
-        # add inventory for unsold goods
+        return q_bought_total, q_bought_consumer, tier_realized, tiers_bought, sales_by_firm
 
     def _book_finance(self, sales_by_firm: Dict[int, float]) -> Tuple[float, float, float]:
         # 6) With sales by firm, calculate finances
         TR_total = TC_total = Profit_total = 0.0
         for f in self.firms:
-            sales_i = sales_by_firm.get(f.id, 0.0) if f.active else 0.0
+            if not f.active:
+                sales_i = 0.0
+            else:
+                sales_i = sales_by_firm.get(f.id, 0.0)
+
+                # unsold = quantity brought to market minus actual sales
+                unsold_i = max(f.q - sales_i, 0.0)
+
+                # accumulate unsold output in inventory
+                f.output_inventory += int(unsold_i)
+
             TR_i, TC_i, PROF_i = f.book_finance(self.price, sales_i)
             TR_total += TR_i
             TC_total += TC_i
             Profit_total += PROF_i
+
         return TR_total, TC_total, Profit_total
 
     def _remove_inactive(self) -> None:
@@ -234,7 +273,8 @@ class Market:
 
     def step(self,
              pop: Population,
-             demand: int,
+             q_consumer: int,
+             q_firm: float,
              rng_entry: np.random.Generator,
              tick: int,
              records: List[Dict],
@@ -242,32 +282,56 @@ class Market:
              ) -> int:
         
         # NATIONAL: 'pop' can be a Country; we only use pop.needs_per_good(self.good)
-        q_demand = int(demand)
+        q_consumer = int(max(0, q_consumer))
+        q_firm = int(max(0, q_firm))
+        q_demand_total = q_consumer + q_firm
 
+        # 1) firms choose quantities at current price
         self._update_firms(tick)
         q_supply = self._supply()
 
         active_firms = sum(1 for f in self.firms if f.active)
 
-        # national needs thresholds (life, everyday, luxury)
+        # 2) national needs thresholds (life, everyday, luxury) for CONSUMERS
         needs = pop.needs_per_good(self.good)
 
-        q_bought, tier_realized, tiers_bought, sales_by_firm = self._clear_market(q_demand, q_supply, needs)
+        # 3) clear market with separated consumer and firm demand
+        (
+            q_bought_total,
+            q_bought_consumer,
+            tier_realized,
+            tiers_bought,
+            sales_by_firm,
+        ) = self._clear_market(
+            cons_desired_q=q_consumer,
+            firm_desired_q=q_firm,
+            q_supply=q_supply,
+            needs=needs,
+        )
+
+        # 4) finance and firm exit
         TR_total, TC_total, Profit_total = self._book_finance(sales_by_firm)
         self._remove_inactive()
 
+        # 5) concentration
         hhi = self._hhi(sales_by_firm, q_supply)
 
+        # 6) record tick
+        q_realized_firm = q_bought_total - q_bought_consumer
         rec = {
             "tick": tick,
             "price": self.price,
-            "q_demand": q_demand,
-            "q_realized": q_bought,
             "q_supply": q_supply,
-            "tier_realized": tier_realized,
+            "q_demand": q_demand_total,
+            "q_demand_consumer": q_consumer,
+            "q_demand_firm": q_firm,
+            "q_realized": q_bought_total,
+            "q_realized_consumer": q_bought_consumer,
+            "q_realized_firm": q_realized_firm,
             "life": tiers_bought["life"],
             "everyday": tiers_bought["everyday"],
             "luxury": tiers_bought["luxury"],
+            "tier_realized": tier_realized,
             "revenue_total": TR_total,
             "cost_total": TC_total,
             "profit_total": Profit_total,
@@ -278,6 +342,7 @@ class Market:
             rec["good"] = self.good
         records.append(rec)
 
-        self._price_update(q_demand, q_supply)
+        # 7) price update uses TOTAL demand (consumer + firm)
+        self._price_update(q_demand_total, q_supply)
         self._apply_shocks(tick)
         return Profit_total

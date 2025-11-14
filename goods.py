@@ -27,11 +27,21 @@ def initial_price(good: GoodID) -> float:
     """Return the initial price for a given good."""
     return INITIAL_PRICES[good]
 
-NEEDS_PER_GOOD: Dict[GoodID, TierNeeds] = { # NEEDS PER 100 POPULATION
-    'bread' : {'life': 30, 'everyday': 50, 'luxury': 100},
-    'grain' : {'life': 30, 'everyday': 50, 'luxury': 100},
-
+# only define what goods will be demanded by the population here
+DEFINED_NEEDS_PER_GOOD: Dict[GoodID, TierNeeds] = { # NEEDS PER 100 POPULATION
+    'bread' : {'life': 30, 'everyday': 50, 'luxury': 100}
 }
+
+def _zero_needs() -> TierNeeds:
+    return {'life': 0.0, 'everyday': 0.0, 'luxury': 0.0}
+
+
+# fill in goods for which needs are not defined as 0 need
+NEEDS_PER_GOOD: Dict[GoodID, TierNeeds] = {
+    g: DEFINED_NEEDS_PER_GOOD.get(g, _zero_needs())
+    for g in GOODS
+}
+
 
 PRODUCTION_RECIPES = {
     'bread': {
