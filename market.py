@@ -88,10 +88,23 @@ class Market:
 
         max_new = max(1, int(active_firms * cfg.ENTRY_MAX_PER_TICK))
 
+        MIN_RGO_SHARE = 0.05      # minimum meaningful share for a new RGO entrant
+        CAP_ENTRY = 1.0           # cap for post-initial allocation
+
         for _ in range(max_new):
             if rng_entry.random() < p_entry:
-                pname = self._sample_province(rng_entry)          # name string
-                province_obj = provinces[pname]                   # actual Province
+                pname = self._sample_province(rng_entry)
+                province_obj = provinces[pname]
+
+                # For RGO firms, block entry if remaining rights < MIN_RGO_SHARE
+                if self.firm_type is FirmType.RGO:
+                    used = province_obj.rights_given.get(self.good, 0.0)
+                    remaining = max(0.0, CAP_ENTRY - used)
+
+                    if remaining < MIN_RGO_SHARE:
+                        # No meaningful rights left; stop trying to add RGOs
+                        break
+
                 entrant = spawn_firms(
                     self.good,
                     self.firm_type,
@@ -99,6 +112,7 @@ class Market:
                     n=1,
                     start_id=next_id,
                     province=province_obj,
+                    # max_share left at default (1.0) for entry
                 )[0]
                 self.firms.append(entrant)
                 next_id += 1
