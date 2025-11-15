@@ -11,11 +11,11 @@ from market import Market
 
 @dataclass
 class Country:
-    # province name -> Population object
-    provinces: Dict[str, Population]
+    # province name -> Province object (which embeds a Population)
+    provinces: Dict[str, prov.Province]
     # weights used for firm seeding and entry sampling
     weights: Dict[str, float]
-    # NEW: national markets, one per good
+    # national markets, one per good
     markets: Dict[gds.GoodID, Market]
 
     @classmethod
@@ -24,10 +24,13 @@ class Country:
         Build a Country from a list of Province specs.
         Also create one Market per good, with province weights for firm placement.
         """
-        pops = {
-            p.name: Population(size=p.pop_size, income_pc=p.income_pc)
-            for p in specs
-        }
+        # keep the same Province instances that sim.py passes in
+        provinces: Dict[str, prov.Province] = {p.name: p for p in specs}
+
+        # attach a Population to each province
+        for p in provinces.values():
+            p.population = Population(size=p.pop_size, income_pc=p.income_pc)
+
         weights = prov.normalized_weights(specs)
 
         # Create one national Market per good, using these weights
@@ -40,30 +43,33 @@ class Country:
             for g in gds.GOODS
         }
 
-
-        return cls(provinces=pops, weights=weights, markets=markets)
+        return cls(provinces=provinces, weights=weights, markets=markets)
 
     # NATIONAL demand - sum provincial demands at given prices
     def demand_for_all_goods(self, prices: Dict[gds.GoodID, float]) -> Dict[gds.GoodID, int]:
         agg: Dict[gds.GoodID, int] = {g: 0 for g in prices.keys()}
-        for pop in self.provinces.values():
+        for province in self.provinces.values():
+            pop = province.population
+            if pop is None:
+                continue
             d = pop.demand_for_all_goods(prices)
             for g, q in d.items():
                 agg[g] = int(agg[g] + q)
         return agg
 
     # NATIONAL needs threshold (for tier labels) - sum provincial needs
-    # Returns (life, everyday, luxury) counts at national scale
     def needs_per_good(self, good: gds.GoodID) -> Tuple[int, int, int]:
         life = every = lux = 0
-        for pop in self.provinces.values():
+        for province in self.provinces.values():
+            pop = province.population
+            if pop is None:
+                continue
             l, e, x = pop.needs_per_good(good)
             life += l
             every += e
             lux += x
         return life, every, lux
 
-    # NEW: helper to seed all markets' firms based on province weights
     def seed_markets(
         self,
         rng_init,
@@ -85,6 +91,5 @@ class Country:
             )
         return next_id
 
-    # Optional convenience: prices per good
     def current_prices(self) -> Dict[gds.GoodID, float]:
         return {g: m.price for g, m in self.markets.items()}

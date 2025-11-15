@@ -45,11 +45,11 @@ NEEDS_PER_GOOD: Dict[GoodID, TierNeeds] = {
 
 PRODUCTION_RECIPES = {
     'bread': {
-        'inputs': {'grain': 2},  # 2 grain -> 1 bread
-        # 'labor_intensity': 1.2
+        'inputs': {'grain': 1},  # 2 grain -> 1 bread
+        'labor_intensity': 0.6 # employees per output
     },
     'grain': {
         'inputs': {},  # no inputs - extracted from provinces
-        # 'labor_intensity': 0.8
+        'labor_intensity': 0.1
     }
 }

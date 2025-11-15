@@ -15,7 +15,7 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
     goods = gds.GOODS
 
     # Build Country (contains provinces -> Populations and Markets)
-    specs = [copy.deepcopy(p) for p in prov.PROVINCES]
+    specs = [copy.deepcopy(p) for p in prov.PROVINCES] # to avoid reusing altered states from previous simulation runs
     country = Country.from_specs(specs)
 
     # map for province objects by name, used when seeding / entry assigns provinces
@@ -43,11 +43,11 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
             g: country.markets[g].price for g in goods
         }
 
-        # 0) firms update their MC based on input prices
+        # 0) firms update their MC based on input prices and wages
         for g in goods:
             market = country.markets[g]
             for f in market.firms:
-                f.update_input_cost(prices)
+                f.update_input_cost(prices, wage=cfg.WAGE)
 
         province_names = list(country.provinces.keys())
         goods = gds.GOODS
@@ -64,19 +64,20 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
 
                 # how much output is this firm planning to produce at current price?
                 q_plan = firm.plan_quantity(price=market.price)
+                q_feasible = firm.hire_and_fire(q_plan, hypothetical=True)   # labor constrained
 
                 for g_in, units in firm.input_requirements.items():
-                    input_demand_nat[g_in] += q_plan * units
+                    input_demand_nat[g_in] += q_feasible  * units
 
         # 2) per province consumer demand for all goods (no firm demand here)
         demand_by_prov: Dict[str, Dict[gds.GoodID, int]] = {}
 
         for pname in province_names:
-            cons_d = country.provinces[pname].demand_for_all_goods(prices)
+            prov_obj = country.provinces[pname]
+            cons_d = prov_obj.population.demand_for_all_goods(prices)   # <- key change
             total_for_p: Dict[gds.GoodID, int] = {}
             for g in goods:
                 q_cons = float(cons_d.get(g, 0))
-                # firm input demand is handled at national level, not per province
                 total_for_p[g] = int(q_cons)
             demand_by_prov[pname] = total_for_p
 
@@ -91,6 +92,9 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
         for g in goods:
             market = country.markets[g]
 
+        for g in goods:
+            market = country.markets[g]
+
             profit = market.step(
                 pop=country,                        # Country provides needs_per_good
                 q_consumer=consumer_nat[g],
@@ -101,11 +105,18 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
                 good_label_in_record=(len(goods) > 1),
             )
 
-
             # pull data directly from record we just appended
             last = records[-1]
             realized_nat[g] = last["q_realized"]
             active_firms = last["active_firms"]
+
+            # NEW: national employment level this tick
+            total_employed = 0
+            for prov_obj in country.provinces.values():
+                pop_obj = prov_obj.population
+                if pop_obj is not None:
+                    total_employed += int(getattr(pop_obj, "number_employed", 0))
+            last["employment_total"] = int(total_employed)
 
             next_id = market._entry(
                 rng_entry=rng_entry,
@@ -114,6 +125,7 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
                 active_firms=active_firms,
                 provinces=province_map,   # pass Province objects
             )
+
 
         # 6) allocate realized to provinces by consumer demand share, with exact reconciliation
         prov_names = list(country.provinces.keys())

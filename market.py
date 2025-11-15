@@ -64,7 +64,7 @@ class Market:
                 n=count,
                 start_id=nid,
                 province=province_obj,
-                max_share=0.7,
+                max_share=0.9,
             )
             self.firms.extend(batch)
             nid += count

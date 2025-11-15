@@ -10,10 +10,18 @@ import goods as gds
 from province import Province
 
 _HISTORY_COLS = [
-    "tick", "quantity", "price",
-    "revenue", "cost", "profit",
-    "active", "treasury"
+    "tick",
+    "quantity",
+    "price",
+    "revenue",
+    "cost",
+    "profit",
+    "active",
+    "treasury",
+    "employees",
+    "output_inventory",
 ]
+
 
 class FirmType(Enum):
     RGO = "rgo"
@@ -45,6 +53,8 @@ class Firm:
     # stock of inputs (not yet fully used)
     input_inventory: Dict[gds.GoodID, int] = field(init=False)
     output_inventory: int = 0.0
+
+    employees: int = 0
 
     active: bool = True
 
@@ -80,6 +90,9 @@ class Firm:
 
         self.output_inventory = 0
 
+        if FirmType is FirmType.RGO:
+            self.capacity = self.resource_rights * self.province.resources.get(self.good, 0)
+
         # production recipe: inputs per unit of this firm's output good
         self.input_requirements = gds.PRODUCTION_RECIPES.get(self.good, {}).get('inputs', {}).copy()
         self.input_inventory = {g: 0.0 for g in self.input_requirements.keys()}
@@ -94,30 +107,32 @@ class Firm:
         if self.base_capacity is None:
             self.base_capacity = float(self.capacity)
 
-    def update_input_cost(self, prices: Dict[gds.GoodID, float]) -> None:
+    def update_input_cost(self, prices: Dict[gds.GoodID, float], wage: float) -> None:
         """
-        Update this firm's MC to include the cost of its input bundle at current prices.
-        Only relevant for manufacturing firms with non-empty input_requirements.
+        Update this firm's MC to include:
+          - the cost of its input bundle at current prices (for Manu firms)
+          - the cost of labor per unit for all firms
+
+        MC = base_MC + input_cost_per_unit + wage * labor_intensity
         """
-        # Only Manu firms actually buy inputs
-        if self.firm_type is not FirmType.Manu:
-            return
-
-        if not self.input_requirements:
-            return
-
-        # Make sure we have a baseline MC (labor / overhead piece)
+        # Make sure we have a baseline MC (non input, non wage part)
         if self.base_MC is None:
             self.base_MC = float(self.MC)
 
-        # Cost of one unit of output's input bundle at current prices
+        # 1) Input bundle cost per unit of output (only if firm uses inputs)
         input_cost_per_unit = 0.0
-        for g, units in self.input_requirements.items():
-            p_in = prices.get(g, 0.0)
-            input_cost_per_unit += float(units) * float(p_in)
+        if self.input_requirements:
+            for g_in, units in self.input_requirements.items():
+                p_in = prices.get(g_in, 0.0)
+                input_cost_per_unit += float(units) * float(p_in)
 
-        # Effective marginal cost = baseline + input bundle
-        self.MC = float(self.base_MC + input_cost_per_unit)
+        # 2) Labor cost per unit of output
+        recipe = gds.PRODUCTION_RECIPES.get(self.good, {})
+        labor_intensity = float(recipe.get("labor_intensity", 0.0))  # workers per unit
+        labor_cost_per_unit = wage * labor_intensity
+
+        # 3) Effective marginal cost
+        self.MC = float(self.base_MC + input_cost_per_unit + labor_cost_per_unit)
 
     def _effective_capacity(self) -> int:
         """
@@ -136,6 +151,7 @@ class Firm:
 
         rights = self.resource_rights or 0.0
         possible_q = pool * rights
+        self.capacity = int(max(0, possible_q))
 
         return int(max(0, possible_q))
 
@@ -165,17 +181,74 @@ class Firm:
 
     def update_quantity(self, price: float, tick: int) -> None:
         """
-        Apply the planning rule (plan_quantity) and commit the quantity.
+        Apply the planning rule (plan_quantity), then apply the labor constraint
+        via hire_and_fire, and commit the final quantity.
         """
         if not self.active:
             self.q = 0
             return
 
-        q_new = self.plan_quantity(price)
-        self.q = int(q_new)
+        # Planned quantity given price and capacity / resources
+        q_desired = self.plan_quantity(price)
+
+        # Labor-constrained feasible quantity
+        q_final = self.hire_and_fire(q_desired, hypothetical=False)
+
+        self.q = int(q_final)
 
         self._log_tick(tick, price, self.q)
         self._last_quantity = self.q
+
+    def hire_and_fire(self, desired_q: int, hypothetical: bool) -> int:
+        """
+        Adjust this firm's employment toward the level needed for desired_q,
+        subject to the available labor in the province.
+
+        Returns the *feasible* output quantity given actual employment.
+        """
+        # If no province / population is attached, we can't constrain on labor
+        if self.province is None or self.province.population is None:
+            return int(max(0, desired_q))
+
+        pop = self.province.population
+
+        # Labor needed per unit of output for this good
+        recipe = gds.PRODUCTION_RECIPES.get(self.good, {})
+        intensity = float(recipe.get("labor_intensity", 0.0))
+
+        desired_q = max(0, int(desired_q))
+
+        # Desired headcount from planned output
+        desired_headcount = int(max(0, round(desired_q * intensity)))
+
+        # Max headcount we could possibly have = current employees + unemployed pool
+        max_headcount = self.employees + pop.number_unemployed
+        target_headcount = min(desired_headcount, max_headcount)
+
+        delta = target_headcount - self.employees
+
+        if not hypothetical:
+            if delta > 0:
+                # Try to hire up to delta workers from the province population
+                hired = pop.hired(delta)
+                self.employees += hired
+
+            elif delta < 0:
+                # Fire up to -delta workers and return them to the unemployment pool
+                to_fire = -delta
+                fired = pop.fired(to_fire)
+                self.employees -= fired
+
+            # guard
+            if self.employees < 0:
+                self.employees = 0
+
+        # Given actual employees, how much can we produce?
+        q_from_labor = int(self.employees / intensity)
+
+        # Final output cannot exceed planned quantity
+        return int(min(desired_q, q_from_labor))
+
 
     def book_finance(self, price: float, sales: float) -> Tuple[float, float, float]:
         TR = price * sales
@@ -213,6 +286,11 @@ class Firm:
                 # firm no longer holds any rights
                 self.resource_rights = 0.0
 
+            # release workers back to the province labor pool
+            if self.employees > 0 and getattr(self.province, "population", None) is not None:
+                self.province.population.fired(self.employees)
+                self.employees = 0
+
         # --- logging ---
         row = self._rows[-1]
         row["revenue"] = float(TR)
@@ -221,6 +299,7 @@ class Firm:
         row["active"] = bool(self.active)
         row["treasury"] = float(self.treasury)
         row["output_inventory"] = float(self.output_inventory)
+        row["employees"] = int(self.employees)
 
         self._cached_df = None  # invalidate cache
         return TR, TC, profit
@@ -235,8 +314,11 @@ class Firm:
             "profit": 0.0,
             "active": bool(self.active),
             "treasury": float(self.treasury),
+            "employees": int(self.employees),
+            "output_inventory": float(self.output_inventory),
         })
         self._cached_df = None  # invalidate cache
+
 
 def draw_resource_rights(
     province: Province,

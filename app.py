@@ -176,6 +176,30 @@ if run_btn:
                 st.pyplot(fig)
 
     # =========================
+    # National employment (level)
+    # =========================
+    if "employment_total" in df_market.columns:
+        st.header("National Employment (level)")
+
+        # One value per tick (since it's duplicated across goods)
+        emp = (
+            df_market[["tick", "employment_total"]]
+            .drop_duplicates(subset=["tick"])
+            .sort_values("tick")
+        )
+
+        fig, ax = plt.subplots()
+        ax.plot(emp["tick"], emp["employment_total"], label="Employed (national)")
+        ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
+        ax.set_xlabel("Tick")
+        ax.set_ylabel("Workers")
+        ax.set_title("National Employment over time")
+        ax.legend()
+        ax.grid(True)
+        st.pyplot(fig)
+
+
+    # =========================
     # Combined spending-tier plot (all goods together)
     # Both goods equally important -> overall tier is the minimum tier across goods at each tick.
     # =========================
@@ -321,9 +345,11 @@ if run_btn:
             "capacity": round(float(getattr(f, "capacity", 0.0)), 2),
             "q_final": round(float(last.get("quantity", 0.0)), 2),
             "profit_final": round(float(last.get("profit", 0.0)), 2),
+            
         }
-        if hasattr(f, "treasury"):
-            row["treasury"] = round(float(getattr(f, "treasury", 0.0)), 2)
+        row["treasury"] = round(float(getattr(f, "treasury", 0.0)), 2)
+        row["resource_rights"] = round(float(getattr(f, "resource_rights", 0.0) or 0.0), 4)
+
         last_rows.append(row)
 
     if last_rows:

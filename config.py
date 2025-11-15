@@ -15,9 +15,10 @@ N_FIRMS = 60
 # Draws for firm heterogeneity
 # FC ~ lognormal, MC ~ normal clipped, capacity ~ uniform
 FC_LOGMEAN, FC_LOGSD = 2.0, 0.6      # exp draw, scale FC (multiplied by 20)
-MC_MEAN, MC_SD = 7.5, 1.5            # mean MC near the price region
-CAP_LOW, CAP_HIGH = 20, 100          # capacity range per firm
+MC_MEAN, MC_SD = 1, 0.1              # mean MC near the price region
+CAP_LOW, CAP_HIGH = 20, 150          # capacity range per firm, hi val used to be 100
 LOSS_SHUTDOWN_TICKS = 15             # if loss for this many consecutive ticks, shutdown
+WAGE = 1.0  # wage per worker per tick
 
 # ----- SHOCK TIMING -----
 SHOCK_TICK = 50
