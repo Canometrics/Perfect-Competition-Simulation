@@ -1,13 +1,9 @@
 from typing import Tuple, List, Dict
-import numpy as np
 import pandas as pd
-import copy
 
 import core.goods as gds
 import config.config as cfg
 from core.firm import Firm
-import core.province as prov
-from core.country import Country
 from services.initialize import initialize_world
 
 def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.DataFrame, List[Firm], pd.DataFrame]:
