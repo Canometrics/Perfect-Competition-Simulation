@@ -1,8 +1,10 @@
 # province.py
 from dataclasses import dataclass, field
 from typing import TypedDict, List, Dict
+
 import goods as gds
 from population import Population
+from firm import Firm
 
 @dataclass
 class Province:
@@ -12,6 +14,7 @@ class Province:
     firm_weight: float  # relative weight for seeding entrants and initial firms
     # Optional resource pools (only used for goods in RAW_GOODS)
     resources: Dict[str, int] = field(default_factory=dict)
+    firms: list[Firm] = field(default_factory=list)
     rights_given: Dict[gds.GoodID, float] = field(default_factory=lambda: {g: 0.0 for g in gds.GOODS})
     population: Population | None = None
 

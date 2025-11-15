@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Optional, Tuple, List, Dict
+from typing import Optional, Tuple, List, Dict, TYPE_CHECKING
 from enum import Enum
 
 import pandas as pd
@@ -7,7 +9,9 @@ import numpy as np
 
 import config as cfg
 import goods as gds
-from province import Province
+
+if TYPE_CHECKING:
+    from province import Province
 
 _HISTORY_COLS = [
     "tick",
@@ -33,6 +37,7 @@ class FirmType(Enum):
 class Firm:
     id: int
     good: gds.GoodID
+    province: "Province"
     FC: float
     MC: float
     capacity: int
@@ -40,11 +45,8 @@ class Firm:
 
     firm_type: FirmType = field(init=False)
 
-    province: Province  # province where the firm is located
-
-    base_MC: Optional[float] = None #labor and overhead rn
+    base_MC: Optional[float] = None
     base_capacity: Optional[float] = None
-
     resource_rights: Optional[float] = None
 
     # what inputs per unit of this firm's output?
@@ -90,7 +92,7 @@ class Firm:
 
         self.output_inventory = 0
 
-        if FirmType is FirmType.RGO:
+        if self.firm_type is FirmType.RGO:
             self.capacity = self.resource_rights * self.province.resources.get(self.good, 0)
 
         # production recipe: inputs per unit of this firm's output good
@@ -377,8 +379,9 @@ def spawn_firms(
         rights = np.zeros(n)
 
     # 2) Build firms, assigning resource_rights from the vector above
-    return [
-        Firm(
+    firms: List[Firm] = []
+    for i in range(n):
+        f = Firm(
             id=start_id + i,
             FC=float(FC[i]),
             MC=float(MC[i]),
@@ -390,5 +393,10 @@ def spawn_firms(
             resource_rights=float(rights[i]) if firm_type is FirmType.RGO else None,
             start_capital=float(cfg.START_CAPITAL)
         )
-        for i in range(n)
-    ]
+        firms.append(f)
+
+        # Provinces are the real owners: register the firm there
+        if province is not None:
+            province.firms.append(f)
+
+    return firms

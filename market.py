@@ -245,9 +245,21 @@ class Market:
         return TR_total, TC_total, Profit_total
 
     def _remove_inactive(self) -> None:
-        # Bookkeeping: Remove inactive firms
-        if any(not f.active for f in self.firms):
-            self.firms = [f for f in self.firms if f.active]
+        # Bookkeeping: Remove inactive firms on both the market and the province
+        if not any(not f.active for f in self.firms):
+            return
+
+        dead = [f for f in self.firms if not f.active]
+
+        # Remove them from their provinces' firm lists
+        for f in dead:
+            prov = getattr(f, "province", None)
+            if prov is not None and hasattr(prov, "firms") and prov.firms is not None:
+                # remove this exact object
+                prov.firms = [pf for pf in prov.firms if pf is not f]
+
+        # Keep only active firms in the market view
+        self.firms = [f for f in self.firms if f.active]
 
     def _price_update(self, q_demand: int, q_supply: int) -> None:
         # Percentage excess: how much demand exceeds supply relative to supply level

@@ -19,7 +19,7 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
     country = Country.from_specs(specs)
 
     # map for province objects by name, used when seeding / entry assigns provinces
-    province_map: Dict[str, prov.Province] = {p.name: p for p in specs}
+    province_map: Dict[str, prov.Province] = country.provinces
 
     # RNGs
     rng_init = np.random.default_rng(cfg.SEED)
@@ -165,14 +165,18 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
                     "q_realized": q_real_p,
                 })
 
-    # collect firms and build df_province
-    firms: List[Firm] = [f for m in country.markets.values() for f in m.firms]
+    # collect firms from provinces (provinces own firms)
+    firms: List[Firm] = [
+        f
+        for prov_obj in country.provinces.values()
+        for f in prov_obj.firms
+    ]
+
     df_province = pd.DataFrame.from_records(prov_records)
 
     # annotate firm histories
     for f in firms:
         f.history["good"] = f.good
-        # province is on the Firm; you can add it into snapshots when you display
 
     df_market = pd.DataFrame.from_records(records)
     return df_market, firms, df_province
