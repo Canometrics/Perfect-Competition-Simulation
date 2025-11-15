@@ -14,8 +14,8 @@ import importlib
 import time
 
 # Local modules
-import config as cfg
-import sim as sim_module
+import config.config as cfg
+import simulation.sim as sim_module
 
 st.set_page_config(page_title="Supply–Demand Simulation", layout="wide")
 

@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 import math
 from copy import deepcopy
 
-import goods as gds
+import core.goods as gds
 
 class ClassType(TypedDict):
     lower: str

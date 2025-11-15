@@ -7,8 +7,8 @@ from enum import Enum
 import pandas as pd
 import numpy as np
 
-import config as cfg
-import goods as gds
+import config.config as cfg
+import core.goods as gds
 
 if TYPE_CHECKING:
     from province import Province

@@ -5,11 +5,11 @@ from collections import deque
 import math
 import numpy as np
 
-import config as cfg
-import goods as gds
-from population import Population
-from firm import Firm, spawn_firms, FirmType
-from province import Province
+import config.config as cfg
+import core.goods as gds
+from core.population import Population
+from core.firm import Firm, spawn_firms, FirmType
+from core.province import Province
 
 
 @dataclass

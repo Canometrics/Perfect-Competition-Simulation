@@ -2,9 +2,9 @@
 from dataclasses import dataclass, field
 from typing import TypedDict, List, Dict
 
-import goods as gds
-from population import Population
-from firm import Firm
+import core.goods as gds
+from core.population import Population
+from core.firm import Firm
 
 @dataclass
 class Province:
