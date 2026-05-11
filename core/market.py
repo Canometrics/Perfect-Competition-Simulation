@@ -19,7 +19,7 @@ class Market:
     # national market knows how to distribute firms over provinces
     province_weights: Dict[str, float] = field(default_factory=dict)
     firms: List[Firm] = field(default_factory=list)
-    profit_hist: deque[float] = field(default_factory=lambda: deque(maxlen=cfg.ENTRY_WINDOW))
+    profit_hist: deque[tuple[float, int]] = field(default_factory=lambda: deque(maxlen=cfg.ENTRY_WINDOW))
 
     def __post_init__(self):
     # initialize firm type from good type
@@ -79,10 +79,12 @@ class Market:
         active_firms: int,
         provinces: Dict[str, Province],
     ) -> int:
-        self.profit_hist.append(tick_profit)
+        self.profit_hist.append((tick_profit, max(1, active_firms)))
 
-        active_now = active_firms or 1
-        avg_profit_per_firm = (np.mean(self.profit_hist) / active_now) if self.profit_hist else 0.0
+        avg_profit_per_firm = (
+            sum(p / n for p, n in self.profit_hist) / len(self.profit_hist)
+            if self.profit_hist else 0.0
+)
         profit_pos = max(avg_profit_per_firm, 0.0)
         p_entry = 1.0 - math.exp(-cfg.ENTRY_ALPHA * profit_pos)
 
@@ -146,8 +148,7 @@ class Market:
         if not shares:
             return 0.0
 
-        # standard HHI in "points": sum of squared percentage shares
-        # (e.g., monopoly -> 100^2 = 10,000)
+        # ( monopoly: 100^2 = 10,000)
         return float(sum((100.0 * s) ** 2 for s in shares))
 
     def _clear_market(
@@ -185,15 +186,13 @@ class Market:
 
         # derive tier caps from needs (consumer side)
         q_life, q_every, q_lux = needs
-        inc_every = max(0, q_every)
-        inc_lux   = max(0, q_lux)
 
         # allocate CONSUMER purchases into tiers
         life_bought = min(q_bought_consumer, q_life)
         rem = q_bought_consumer - life_bought
-        every_bought = min(rem, inc_every)
+        every_bought = min(rem, q_every)
         rem -= every_bought
-        lux_bought = min(rem, inc_lux)
+        lux_bought = min(rem, q_lux)
 
         tiers_bought = {
             "life": life_bought,
@@ -204,9 +203,9 @@ class Market:
         # label of highest fully reached consumer tier
         if life_bought < q_life:
             tier_realized = "life_partial"
-        elif every_bought < inc_every:
+        elif every_bought < q_every:
             tier_realized = "life"
-        elif lux_bought < inc_lux:
+        elif lux_bought < q_lux:
             tier_realized = "everyday"
         else:
             tier_realized = "luxury"
@@ -264,38 +263,38 @@ class Market:
     def _price_update(self, q_demand: int, q_supply: int) -> None:
         # Percentage excess: how much demand exceeds supply relative to supply level
         excess_pct = (q_demand - q_supply) / max(1, q_supply)
-        excess_pct = max(-0.9, min(2.0, excess_pct))
+        excess_pct = max(-0.5, min(0.5, excess_pct))
 
-        # Tatonnement target based on *percentage* imbalance
+        # Tatonnement target based on pct imbalance
         p_target = max(0.01, self.price * (1 +  cfg.tatonnement_speed * excess_pct))
 
-        # Exponential smoothing towards target
+        # Exponential smoothing towards target, this is lowkey extra
         self.price = max(0.01, (1 - cfg.price_alpha) * self.price + cfg.price_alpha * p_target)
 
 
-    def _apply_shocks(self, tick: int) -> None:
-        # 9) Shocks
-        if cfg.USE_CAPACITY_SHOCK and tick == cfg.SHOCK_TICK:
-            for f in self.firms:
-                if f.base_capacity is None:
-                    f.base_capacity = float(f.capacity)
-                f.capacity = int(f.base_capacity * cfg.CAP_MULT_DURING_SHOCK)
+    # # def _apply_shocks(self, tick: int) -> None:
+    #     # 9) Shocks
+    #     if cfg.USE_CAPACITY_SHOCK and tick == cfg.SHOCK_TICK:
+    #         for f in self.firms:
+    #             if f.base_capacity is None:
+    #                 f.base_capacity = float(f.capacity)
+    #             f.capacity = int(f.base_capacity * cfg.CAP_MULT_DURING_SHOCK)
 
-        if cfg.USE_CAPACITY_SHOCK and cfg.SHOCK_DURATION > 0 and tick == cfg.SHOCK_TICK + cfg.SHOCK_DURATION:
-            for f in self.firms:
-                if f.base_capacity is not None:
-                    f.capacity = int(f.base_capacity)
+    #     if cfg.USE_CAPACITY_SHOCK and cfg.SHOCK_DURATION > 0 and tick == cfg.SHOCK_TICK + cfg.SHOCK_DURATION:
+    #         for f in self.firms:
+    #             if f.base_capacity is not None:
+    #                 f.capacity = int(f.base_capacity)
 
-        if cfg.USE_MC_SHOCK and tick == cfg.SHOCK_TICK:
-            for f in self.firms:
-                if f.base_MC is None:
-                    f.base_MC = float(f.MC)
-                f.MC = float(f.base_MC * cfg.MC_MULT_DURING_SHOCK)
+    #     if cfg.USE_MC_SHOCK and tick == cfg.SHOCK_TICK:
+    #         for f in self.firms:
+    #             if f.base_MC is None:
+    #                 f.base_MC = float(f.MC)
+    #             f.MC = float(f.base_MC * cfg.MC_MULT_DURING_SHOCK)
 
-        if cfg.USE_MC_SHOCK and cfg.SHOCK_DURATION > 0 and tick == cfg.SHOCK_TICK + cfg.SHOCK_DURATION:
-            for f in self.firms:
-                if f.base_MC is not None:
-                    f.MC = float(f.base_MC)
+    #     if cfg.USE_MC_SHOCK and cfg.SHOCK_DURATION > 0 and tick == cfg.SHOCK_TICK + cfg.SHOCK_DURATION:
+    #         for f in self.firms:
+    #             if f.base_MC is not None:
+    #                 f.MC = float(f.base_MC)
 
     def step(self,
              pop: Population,
@@ -370,5 +369,5 @@ class Market:
 
         # 7) price update uses TOTAL demand (consumer + firm)
         self._price_update(q_demand_total, q_supply)
-        self._apply_shocks(tick)
+        # self._apply_shocks(tick)
         return Profit_total

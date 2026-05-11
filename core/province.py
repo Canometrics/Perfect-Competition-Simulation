@@ -30,7 +30,7 @@ def normalized_weights(specs: List[Province]) -> Dict[str, float]:
     return {p.name: (p.firm_weight / total) for p in specs}
 
 PROVINCES: List[Province] = [
-    Province(name="New York",    pop_size=1900, income_pc=1800.0, firm_weight=1.4, resources={"grain": 3000}),
-    Province(name="Los Angeles", pop_size=1300, income_pc=1700.0, firm_weight=1.1, resources={"grain": 5000}),
-    Province(name="Chicago",     pop_size=900,  income_pc=1500.0, firm_weight=0.9, resources={"grain": 1000}),
+    Province(name="New York",    pop_size=2500, income_pc=1800.0, firm_weight=1.4, resources={"grain": 5000, "wood": 9000}),
+    Province(name="Los Angeles", pop_size=2500, income_pc=2700.0, firm_weight=1.1, resources={"grain": 5000, 'wood': 8000, "iron": 8000}),
+    Province(name="Chicago",     pop_size=3200,  income_pc=2000.0, firm_weight=0.9, resources={"grain": 5000, 'iron': 9000}),
 ]

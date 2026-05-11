@@ -42,18 +42,25 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("Firms and Entry")
     N_FIRMS = st.number_input("Initial # firms", min_value=1, max_value=10000, value=int(cfg.N_FIRMS), step=1)
+    PLANNING_RULE = st.selectbox(
+    "Firm quantity planning rule",
+    options=["optimize", "guess"],
+    index=0 if getattr(cfg, "PLANNING_RULE", "optimize") == "optimize" else 1,
+    help="optimize: margin-based target with smoothing | guess: ±5% MC band heuristic"
+)
+
     ENTRY_ALPHA = st.number_input("Entry alpha", min_value=0.0, max_value=0.1, value=float(cfg.ENTRY_ALPHA), step=0.0005, format="%.4f")
     ENTRY_WINDOW = st.number_input("Entry window (ticks)", min_value=1, max_value=200, value=int(cfg.ENTRY_WINDOW), step=1)
     ENTRY_MAX_PER_TICK = st.number_input("Entry max per tick (pct of all firms)", min_value=0.0, max_value=1.0, value=float(cfg.ENTRY_MAX_PER_TICK), step=0.01)
 
-    st.markdown("---")
-    st.subheader("Shock")
-    SHOCK_TICK = st.number_input("Shock tick", min_value=0, max_value=100000, value=int(cfg.SHOCK_TICK), step=1)
-    SHOCK_DURATION = st.number_input("Shock duration (0 = permanent)", min_value=0, max_value=100000, value=int(cfg.SHOCK_DURATION), step=1)
-    USE_MC_SHOCK = st.checkbox("Use MC (input cost) shock", value=getattr(cfg, "USE_MC_SHOCK", True))
-    MC_MULT_DURING_SHOCK = st.number_input("MC multiplier during shock", min_value=0.01, max_value=100.0, value=float(getattr(cfg, "MC_MULT_DURING_SHOCK", 2.0)), step=0.1)
-    USE_CAPACITY_SHOCK = st.checkbox("Use capacity shock", value=getattr(cfg, "USE_CAPACITY_SHOCK", False))
-    CAP_MULT_DURING_SHOCK = st.number_input("Capacity multiplier during shock", min_value=0.01, max_value=10.0, value=float(getattr(cfg, "CAP_MULT_DURING_SHOCK", 0.5)), step=0.05)
+    # st.markdown("---")
+    # st.subheader("Shock")
+    # SHOCK_TICK = st.number_input("Shock tick", min_value=0, max_value=100000, value=int(cfg.SHOCK_TICK), step=1)
+    # SHOCK_DURATION = st.number_input("Shock duration (0 = permanent)", min_value=0, max_value=100000, value=int(cfg.SHOCK_DURATION), step=1)
+    # USE_MC_SHOCK = st.checkbox("Use MC (input cost) shock", value=getattr(cfg, "USE_MC_SHOCK", True))
+    # MC_MULT_DURING_SHOCK = st.number_input("MC multiplier during shock", min_value=0.01, max_value=100.0, value=float(getattr(cfg, "MC_MULT_DURING_SHOCK", 2.0)), step=0.1)
+    # USE_CAPACITY_SHOCK = st.checkbox("Use capacity shock", value=getattr(cfg, "USE_CAPACITY_SHOCK", False))
+    # CAP_MULT_DURING_SHOCK = st.number_input("Capacity multiplier during shock", min_value=0.01, max_value=10.0, value=float(getattr(cfg, "CAP_MULT_DURING_SHOCK", 0.5)), step=0.05)
 
     st.markdown("---")
     st.subheader("Treasury")
@@ -69,18 +76,19 @@ def set_config():
     cfg.T = int(T)
     cfg.tatonnement_speed = float(tatonnement_speed)
     cfg.price_alpha = float(price_alpha)
+    cfg.PLANNING_RULE = str(PLANNING_RULE)
 
     cfg.N_FIRMS = int(N_FIRMS)
     cfg.ENTRY_ALPHA = float(ENTRY_ALPHA)
     cfg.ENTRY_WINDOW = int(ENTRY_WINDOW)
     cfg.ENTRY_MAX_PER_TICK = float(ENTRY_MAX_PER_TICK)
 
-    cfg.SHOCK_TICK = int(SHOCK_TICK)
-    cfg.SHOCK_DURATION = int(SHOCK_DURATION)
-    cfg.USE_MC_SHOCK = bool(USE_MC_SHOCK)
-    cfg.MC_MULT_DURING_SHOCK = float(MC_MULT_DURING_SHOCK)
-    cfg.USE_CAPACITY_SHOCK = bool(USE_CAPACITY_SHOCK)
-    cfg.CAP_MULT_DURING_SHOCK = float(CAP_MULT_DURING_SHOCK)
+    # cfg.SHOCK_TICK = int(SHOCK_TICK)
+    # cfg.SHOCK_DURATION = int(SHOCK_DURATION)
+    # cfg.USE_MC_SHOCK = bool(USE_MC_SHOCK)
+    # cfg.MC_MULT_DURING_SHOCK = float(MC_MULT_DURING_SHOCK)
+    # cfg.USE_CAPACITY_SHOCK = bool(USE_CAPACITY_SHOCK)
+    # cfg.CAP_MULT_DURING_SHOCK = float(CAP_MULT_DURING_SHOCK)
 
     # Treasury
     cfg.START_CAPITAL = float(START_CAPITAL)
@@ -129,7 +137,6 @@ if run_btn:
                     ax.plot(df_g["tick"], df_g["q_realized"], label="Quantity Bought")
                 if "q_supply" in df_g.columns:
                     ax.plot(df_g["tick"], df_g["q_supply"], label="Quantity Supplied")
-                ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
                 ax.set_xlabel("Tick"); ax.set_ylabel("Units"); ax.legend(); ax.set_title("Quantities")
                 ax.grid(True)
                 st.pyplot(fig)
@@ -139,7 +146,6 @@ if run_btn:
                 fig, ax = plt.subplots()
                 if "price" in df_g.columns:
                     ax.plot(df_g["tick"], df_g["price"], label="Price")
-                ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
                 ax.set_xlabel("Tick"); ax.set_ylabel("Price"); ax.legend(); ax.set_title("Price")
                 ax.grid(True)
                 st.pyplot(fig)
@@ -150,7 +156,6 @@ if run_btn:
                 fig, ax = plt.subplots()
                 if "profit_total" in df_g.columns:
                     ax.plot(df_g["tick"], df_g["profit_total"], label="Total Profit")
-                ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
                 ax.set_xlabel("Tick"); ax.set_ylabel("Profit"); ax.legend(); ax.set_title("Profit")
                 ax.grid(True)
                 st.pyplot(fig)
@@ -160,17 +165,14 @@ if run_btn:
                 fig, ax = plt.subplots()
                 if "active_firms" in df_g.columns:
                     ax.plot(df_g["tick"], df_g["active_firms"], label="Active Firms")
-                ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
                 ax.set_xlabel("Tick"); ax.set_ylabel("Count"); ax.legend(); ax.set_title("Active Firms")
                 ax.grid(True)
                 st.pyplot(fig)
 
-            with c4:
                 st.subheader("HHI (0–10,000)")
                 fig, ax = plt.subplots()
                 if "hhi" in df_g.columns:
                     ax.plot(df_g["tick"], df_g["hhi"], label="HHI")
-                ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
                 ax.set_xlabel("Tick"); ax.set_ylabel("HHI"); ax.legend(); ax.set_title("Concentration")
                 ax.grid(True)
                 st.pyplot(fig)
@@ -190,7 +192,6 @@ if run_btn:
 
         fig, ax = plt.subplots()
         ax.plot(emp["tick"], emp["employment_total"], label="Employed (national)")
-        ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
         ax.set_xlabel("Tick")
         ax.set_ylabel("Workers")
         ax.set_title("National Employment over time")
@@ -216,7 +217,6 @@ if run_btn:
 
         fig, ax = plt.subplots()
         ax.plot(combined["tick"], combined["level"], drawstyle="steps-post", linestyle="--", label="Combined (min across goods)")
-        ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
         ax.set_yticks([0, 1, 2, 3], labels=labels)
         ax.set_xlabel("Tick"); ax.set_ylabel("Tier level")
         ax.set_title("Highest Spending Tier Reached (Combined)")
@@ -249,7 +249,6 @@ if run_btn:
                 for prov in prov_names:
                     d = df_p[df_p["province"] == prov]
                     ax.plot(d["tick"], d["q_demand"], label=f"{prov}")
-                ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
                 ax.set_xlabel("Tick"); ax.set_ylabel("Units")
                 ax.set_title("Demand by province")
                 ax.legend(ncols=2, fontsize=8)
@@ -263,7 +262,6 @@ if run_btn:
                     for prov in prov_names:
                         d = df_p[df_p["province"] == prov]
                         ax.plot(d["tick"], d["q_realized"], label=f"{prov}")
-                    ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
                     ax.set_xlabel("Tick"); ax.set_ylabel("Units")
                     ax.set_title("Realized purchases by province")
                     ax.legend(ncols=2, fontsize=8)
@@ -304,7 +302,6 @@ if run_btn:
             ax.plot(df_market["tick"], df_market["treasury_total"], label="Total Treasury")
             if "neg_treasury_firms" in df_market.columns:
                 ax.plot(df_market["tick"], df_market["neg_treasury_firms"], label="# Firms with negative treasury")
-            ax.axvline(cfg.SHOCK_TICK, linestyle=":", linewidth=1)
             ax.set_xlabel("Tick"); ax.set_ylabel("Value"); ax.legend(); ax.grid(True)
             st.pyplot(fig)
 
@@ -347,6 +344,7 @@ if run_btn:
             "profit_final": round(float(last.get("profit", 0.0)), 2),
             
         }
+        row["output_inventory"] = round(int(getattr(f, "output_inventory", 0.0)), 2)
         row["treasury"] = round(float(getattr(f, "treasury", 0.0)), 2)
         row["resource_rights"] = round(float(getattr(f, "resource_rights", 0.0) or 0.0), 4)
 

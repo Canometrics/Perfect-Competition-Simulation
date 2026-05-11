@@ -92,7 +92,7 @@ class Country:
             )
         return next_id
 
-    def current_prices(self) -> Dict[gds.GoodID, float]:
+    def current_prices(self) -> Dict[gds.GoodID, float]: #unused at this time 10 may
         return {g: m.price for g, m in self.markets.items()}
 
     def country_step(
@@ -129,9 +129,9 @@ class Country:
             for f in market.firms:
                 f.update_input_cost(prices, wage=cfg.WAGE)
 
-        province_names = list(self.provinces.keys())
+        prov_names = list(self.provinces.keys())
 
-        # 2) national firm input-demand per good (based on feasible output)
+      # 2) national firm input-demand per good (based on feasible output)
         input_demand_nat: Dict[gds.GoodID, float] = {g: 0.0 for g in goods}
 
         for g_out in goods:
@@ -149,15 +149,15 @@ class Country:
                 for g_in, units in firm.input_requirements.items():
                     input_demand_nat[g_in] += q_feasible * units
 
+
         # 3) per-province consumer demand (only households)
         demand_by_prov: Dict[str, Dict[gds.GoodID, int]] = {}
-        for pname in province_names:
+        for pname in prov_names:
             prov_obj = self.provinces[pname]
             cons_d = prov_obj.population.demand_for_all_goods(prices)
             total_for_p: Dict[gds.GoodID, int] = {}
             for g in goods:
-                q_cons = float(cons_d.get(g, 0))
-                total_for_p[g] = int(q_cons)
+                total_for_p[g] = int(cons_d.get(g, 0))
             demand_by_prov[pname] = total_for_p
 
         # 4) national consumer demand (sum over provinces)
@@ -204,7 +204,6 @@ class Country:
             )
 
         # 6) allocate realized quantities back to provinces by consumer demand share
-        prov_names = list(self.provinces.keys())
         for g in goods:
             d_nat_cons = consumer_nat[g]
             if d_nat_cons <= 0:

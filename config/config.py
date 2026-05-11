@@ -1,16 +1,22 @@
+from typing import Dict
 
 # ---------------- CONFIG ----------------
 SEED = 7
 T = 600                 # ticks
 tatonnement_speed = 0.8        # price adjustment speed
 price_alpha = 0.3       # price smoothing factor (to avoid extremely jagged prices)
-
+PRICE_ELASTICITY = 1.5
+COBB_DOUGLAS_WEIGHTS: Dict[str, float] = {
+    'consgoods': 0.6,
+    'food':      0.4,
+}
 # Population config
 POP_SIZE = 1000
 INCOME_PC = 900         # income per 100 ppl per tick
 
 # Firm config
 N_FIRMS = 60
+PLANNING_RULE = "optimize"   # "optimize" or "guess"
 
 # Draws for firm heterogeneity
 # FC ~ lognormal, MC ~ normal clipped, capacity ~ uniform
@@ -20,17 +26,7 @@ CAP_LOW, CAP_HIGH = 20, 150          # capacity range per firm, hi val used to b
 LOSS_SHUTDOWN_TICKS = 15             # if loss for this many consecutive ticks, shutdown
 WAGE = 1.0  # wage per worker per tick
 
-# ----- SHOCK TIMING -----
-SHOCK_TICK = 50
-SHOCK_DURATION = 20  # 0 = permanent
 
-# ----- CAPACITY SHOCK (optional) -----
-CAP_MULT_DURING_SHOCK = 0.1
-USE_CAPACITY_SHOCK = False
-
-# ----- MC (COST) SHOCK (optional) -----
-MC_MULT_DURING_SHOCK = 2.0
-USE_MC_SHOCK = True
 
 # ----- ENTRY -----
 ENTRY_ALPHA = 0.002          # controls steepness of Pr(entry)

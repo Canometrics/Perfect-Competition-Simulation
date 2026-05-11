@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional, Tuple, List, Dict, TYPE_CHECKING
 from enum import Enum
+import math
 
 import pandas as pd
 import numpy as np
@@ -54,7 +55,7 @@ class Firm:
 
     # stock of inputs (not yet fully used)
     input_inventory: Dict[gds.GoodID, int] = field(init=False)
-    output_inventory: int = 0.0
+    output_inventory: int = 0
 
     employees: int = 0
 
@@ -90,24 +91,20 @@ class Firm:
         else:
             self.firm_type = FirmType.Manu
 
-        self.output_inventory = 0
-
         if self.firm_type is FirmType.RGO:
             self.capacity = self.resource_rights * self.province.resources.get(self.good, 0)
 
         # production recipe: inputs per unit of this firm's output good
         self.input_requirements = gds.PRODUCTION_RECIPES.get(self.good, {}).get('inputs', {}).copy()
-        self.input_inventory = {g: 0.0 for g in self.input_requirements.keys()}
+        self.input_inventory = {g: 0 for g in self.input_requirements.keys()}
 
-        if self.treasury == 0.0 and self.start_capital != 0.0:
+        if self.treasury == 0.0 and self.start_capital != 0.0: # <- this exists as a safeguard for good reason
             self.treasury = float(self.start_capital)
 
         # baseline MC before adding input costs (labor / tech)
-        if self.base_MC is None:
-            self.base_MC = float(self.MC)
+        self.base_MC = float(self.MC)
 
-        if self.base_capacity is None:
-            self.base_capacity = float(self.capacity)
+        self.base_capacity = float(self.capacity)
 
     def update_input_cost(self, prices: Dict[gds.GoodID, float], wage: float) -> None:
         """
@@ -118,7 +115,7 @@ class Firm:
         MC = base_MC + input_cost_per_unit + wage * labor_intensity
         """
         # Make sure we have a baseline MC (non input, non wage part)
-        if self.base_MC is None:
+        if self.base_MC is None: # for some reason this check is important
             self.base_MC = float(self.MC)
 
         # 1) Input bundle cost per unit of output (only if firm uses inputs)
@@ -147,39 +144,67 @@ class Firm:
             return int(self.capacity)
 
         # RGO firms: compute resource-limited capacity
-        pool = 0
-        if hasattr(self.province, "resources") and self.province.resources is not None:
-            pool = self.province.resources.get(self.good, 0)
+        pool = self.province.resources.get(self.good, 0)
 
         rights = self.resource_rights or 0.0
-        possible_q = pool * rights
-        self.capacity = int(max(0, possible_q))
+        self.capacity = int(max(0, pool * rights))
 
-        return int(max(0, possible_q))
+        return self.capacity
 
     def plan_quantity(self, price: float) -> int:
-        """
-        Decide desired output quantity for this tick based on price vs MC
-        and last period's quantity.
-        This is used both by the simulation to compute input demand
-        and by update_quantity to actually set q.
-        """
+        if cfg.PLANNING_RULE == "guess":
+            return self.plan_quantity_guessing(price)
+        return self.plan_quantity_optimize(price)
+
+
+    def plan_quantity_guessing(self, price: float) -> int:
         if not self.active:
             return 0
 
         c = self._effective_capacity()
 
-        # First production tick: start low
+        # First production tick -> start moderately
         if self.last_quantity is None:
-            target = int(c * 0.1)
-        # Price below or equal to marginal cost → scale down
-        elif price <= self.MC:
-            target = max(0.0, self.last_quantity - c * 0.02)
-        # Price above marginal cost → scale up
-        else:
-            target = min(self.last_quantity + c * 0.02, c)
+            return int(c * 0.05)
 
-        return int(np.clip(target, 0.0, c))
+        # --- ±5 percent MC band ---
+        lower = 0.97 * self.MC
+        upper = 1.03 * self.MC
+
+        # If price in band, keep quantity stable
+        if lower <= price <= upper:
+            return int(self.last_quantity)
+
+        # Price too low -> scale down
+        if price < lower:
+            return int(max(0.0, self.last_quantity - c * 0.05))
+
+        # Price too high -> scale up
+        return int(min(self.last_quantity + c * 0.05, c))
+
+    def plan_quantity_optimize(self, price: float) -> int: # this is a better option!
+        if not self.active:
+            return 0
+
+        c = self._effective_capacity()
+
+        if self.MC <= 0:
+            return c
+
+        # profit margin as fraction of price: 0 when price=MC, 1 when price→∞
+        margin = max(0.0, (price - self.MC) / price)
+        target = int(c * margin)
+
+        if self.last_quantity is None:
+            return int(c * 0.05)
+
+        # smooth adjustment toward target — max 10% capacity step per tick
+        step = c * 0.10
+        if target > self.last_quantity:
+            return int(min(target, self.last_quantity + step))
+        elif target < self.last_quantity:
+            return int(max(target, self.last_quantity - step))
+        return int(self.last_quantity)
 
     def update_quantity(self, price: float, tick: int) -> None:
         """
@@ -189,14 +214,22 @@ class Firm:
         if not self.active:
             self.q = 0
             return
+        # self.output_inventory = 0 # just to disable inventory for now
 
         # Planned quantity given price and capacity / resources
         q_desired = self.plan_quantity(price)
 
-        # Labor-constrained feasible quantity
-        q_final = self.hire_and_fire(q_desired, hypothetical=False)
+        # Treat q_desired as TOTAL we want available (prod + inventory).
+        # Only produce what we are missing, never less than 0.
+        inv = int(max(0, self.output_inventory))
+        q_to_produce = max(0, q_desired - inv)
 
-        self.q = int(q_final)
+        # Labor-constrained feasible quantity of NEW production
+        q_final = self.hire_and_fire(q_to_produce, hypothetical=False) + inv
+
+        self.q = int(max(0, q_final))
+        self.q = q_to_produce # to disable labor market, this is not logically correct but it works
+        self.output_inventory = 0
 
         self._log_tick(tick, price, self.q)
         self._last_quantity = self.q
@@ -208,10 +241,6 @@ class Firm:
 
         Returns the *feasible* output quantity given actual employment.
         """
-        # If no province / population is attached, we can't constrain on labor
-        if self.province is None or self.province.population is None:
-            return int(max(0, desired_q))
-
         pop = self.province.population
 
         # Labor needed per unit of output for this good
@@ -221,7 +250,7 @@ class Firm:
         desired_q = max(0, int(desired_q))
 
         # Desired headcount from planned output
-        desired_headcount = int(max(0, round(desired_q * intensity)))
+        desired_headcount = int(max(0, math.ceil(desired_q * intensity)))
 
         # Max headcount we could possibly have = current employees + unemployed pool
         max_headcount = self.employees + pop.number_unemployed
@@ -335,14 +364,13 @@ def draw_resource_rights(
     used = province.rights_given.get(good, 0.0)
 
     # never allow cap > 1.0
-    cap = min(1.0, float(cap))
     remaining = max(0.0, cap - used)
 
     if remaining <= 0.0:
         # no rights left under this cap
         return np.zeros(n)
 
-    raw = rng.uniform(0.01, 1.0, size=n)
+    raw = rng.uniform(0.01, 0.05, size=n)
     shares = raw / raw.sum()
     rights = remaining * shares
 
@@ -363,7 +391,7 @@ def spawn_firms(
 
     FC  = 20.0 * np.exp(rng.normal(cfg.FC_LOGMEAN, cfg.FC_LOGSD, size=n))
     MC  = np.clip(rng.normal(cfg.MC_MEAN, cfg.MC_SD, size=n), 0.5, None)
-    CAP = rng.uniform(cfg.CAP_LOW, cfg.CAP_HIGH, size=n)
+    CAP = rng.uniform(cfg.CAP_LOW, cfg.CAP_HIGH, size=n) # np.full(shape=n, fill_value=80)
 
     # 1) Draw resource rights for this batch so that the total is < 1.0
     # Only RGO firms need resource rights
