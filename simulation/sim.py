@@ -12,8 +12,6 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> Tuple[pd.Da
     goods = gds.GOODS
 
     country, province_map, rng_entry, next_id = initialize_world(
-        seed=cfg.SEED,
-        n_firms=cfg.N_FIRMS,
         start_id=0,
     )
 

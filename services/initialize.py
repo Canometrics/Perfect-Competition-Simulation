@@ -10,8 +10,8 @@ from core.country import Country
 
 
 def initialize_world(
-    seed: int | None = None,
-    n_firms: int | None = None,
+    seed: int = cfg.SEED,
+    n_firms: int = cfg.N_FIRMS,
     start_id: int = 0,
 ) -> Tuple[Country, Dict[str, prov.Province], np.random.Generator, int]:
     """
@@ -23,8 +23,6 @@ def initialize_world(
         rng_entry: RNG for entry process
         next_id: next available firm id after initial seeding
     """
-    seed = cfg.SEED if seed is None else seed
-    n_firms = cfg.N_FIRMS if n_firms is None else n_firms
 
     # Safe copy of province specs
     specs = [copy.deepcopy(p) for p in prov.PROVINCES]
