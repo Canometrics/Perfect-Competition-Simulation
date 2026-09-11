@@ -9,7 +9,6 @@ import numpy as np
 import config.config as cfg
 import core.goods as gds
 from core.firm import Firm, FirmType, spawn_firms
-from core.population import Population
 from core.province import Province
 
 
@@ -23,25 +22,34 @@ class Market:
     profit_hist: deque[tuple[float, int]] = field(default_factory=lambda: deque(maxlen=cfg.ENTRY_WINDOW))
 
     def __post_init__(self):
-    # initialize firm type from good type
+        """
+        Initialize firm type from good type.
+        """
         if gds.is_raw(self.good):
             self.firm_type = FirmType.RGO
         else:
             self.firm_type = FirmType.Manu
 
     def _sample_province(self, rng: np.random.Generator) -> str:
+        """
+        Pick a random province based on province weights.
+        """
         names = list(self.province_weights.keys())
         probs = np.array([self.province_weights[n] for n in names], dtype=float)
         probs = probs / probs.sum()
         return str(rng.choice(names, p=probs))
 
-    def seed(
+    def seed_firms(
         self,
         rng_init: np.random.Generator,
         n_firms: int,
         start_id: int,
         provinces: dict[str, Province],        # <-- keep this
-    ) -> int:
+        ) -> int:
+        """
+        Generate initial firms for simulation start in each province based on weights.
+        """
+
         # split initial firms by weights
         names = list(self.province_weights.keys())
         probs = np.array([self.province_weights[n] for n in names], dtype=float)
@@ -78,7 +86,11 @@ class Market:
         tick_profit: float,
         active_firms: int,
         provinces: dict[str, Province],
-    ) -> int:
+        ) -> int:
+        """
+        Check for the right entry conditions and generate new firms if conditions allow.
+        """
+
         self.profit_hist.append((tick_profit, max(1, active_firms)))
 
         avg_profit_per_firm = (
@@ -121,13 +133,34 @@ class Market:
 
         return next_id
 
+    def _remove_inactive(self) -> None:
+        # Bookkeeping: Remove inactive firms on both the market and the province
+        if not any(not f.active for f in self.firms):
+            return
+
+        dead = [f for f in self.firms if not f.active]
+
+        # Remove them from their provinces' firm lists
+        for f in dead:
+            prov = getattr(f, "province", None)
+            if prov is not None and hasattr(prov, "firms") and prov.firms is not None:
+                # remove this exact object
+                prov.firms = [pf for pf in prov.firms if pf is not f]
+
+        # Keep only active firms in the market view
+        self.firms = [f for f in self.firms if f.active]
+
     def _update_firms(self, tick: int) -> None:
-        # 2) Firms update quantities
+        """
+        All firms update their quantities based on the firm update quantity function.
+        """
         for f in self.firms:
             f.update_quantity(self.price, tick=tick)
 
     def _supply(self) -> int:
-        # 3) Aggregating supply
+        """
+        After all firms have updated their quantities, get the entire output.
+        """
         return int(sum(f.q for f in self.firms))
 
     def _hhi(self, sales_by_firm: dict[int, float], fallback_supply: int) -> float:
@@ -153,17 +186,16 @@ class Market:
 
     def _clear_market(
         self,
-        cons_desired_q: int,
-        firm_desired_q: int,
-        q_supply: int,
-        # needs: tuple[int, int, int],
+        demand_from_cons: int,
+        demand_from_firms: int,
+        supply_total: int,
     ) -> tuple[int, int, str, dict[str, int], dict[int, float]]:
         """
         Clear the market given separate consumer and firm demand.
 
-        - cons_desired_q: consumer demand for this good
-        - firm_desired_q: firm input demand for this good
-        - q_supply: total quantity supplied by firms this tick
+        - demand_from_cons: consumer demand for this good
+        - demand_from_firms: firm input demand for this good
+        - supply_total: total quantity supplied by firms this tick
         - needs: (life, everyday, luxury) thresholds for CONSUMER only
 
         Returns:
@@ -171,24 +203,24 @@ class Market:
             q_bought_consumer: quantity bought by consumers
             sales_by_firm: allocation of total sales to firms
         """
-        cons_desired_q = int(max(0, cons_desired_q))
-        firm_desired_q = int(max(0, firm_desired_q))
-        q_supply = int(max(0, q_supply))
+        demand_from_cons = max(0, demand_from_cons)
+        demand_from_firms = max(0, demand_from_firms)
+        supply_total = max(0, supply_total)
 
         # Total demand that hits the market for pricing / sales
-        q_total_desired = cons_desired_q + firm_desired_q
-        q_bought_total = min(q_total_desired, q_supply)
+        demand_total = demand_from_cons + demand_from_firms
+        q_bought_total = min(demand_total, supply_total)
 
         # Consumers can never buy more than their own desired quantity
-        q_bought_consumer = min(cons_desired_q, q_bought_total)
+        q_bought_consumer = min(demand_from_cons, q_bought_total)
 
         sales_by_firm: dict[int, float] = {f.id: 0.0 for f in self.firms}
 
-        if q_supply > 0 and q_bought_total > 0:
+        if supply_total > 0 and q_bought_total > 0:
             for f in self.firms:
                 if not f.active or f.q <= 0:
                     continue
-                share = f.q / q_supply
+                share = f.q / supply_total
                 sales_by_firm[f.id] = min(f.q, share * q_bought_total)
 
         return q_bought_total, q_bought_consumer, sales_by_firm
@@ -215,26 +247,9 @@ class Market:
 
         return TR_total, TC_total, Profit_total
 
-    def _remove_inactive(self) -> None:
-        # Bookkeeping: Remove inactive firms on both the market and the province
-        if not any(not f.active for f in self.firms):
-            return
-
-        dead = [f for f in self.firms if not f.active]
-
-        # Remove them from their provinces' firm lists
-        for f in dead:
-            prov = getattr(f, "province", None)
-            if prov is not None and hasattr(prov, "firms") and prov.firms is not None:
-                # remove this exact object
-                prov.firms = [pf for pf in prov.firms if pf is not f]
-
-        # Keep only active firms in the market view
-        self.firms = [f for f in self.firms if f.active]
-
-    def _price_update(self, q_demand: int, q_supply: int) -> None:
+    def _price_update(self, q_demand: int, supply_total: int) -> None:
         # Percentage excess: how much demand exceeds supply relative to supply level
-        excess_pct = (q_demand - q_supply) / max(1, q_supply)
+        excess_pct = (q_demand - supply_total) / max(1, supply_total)
         excess_pct = max(-0.5, min(0.5, excess_pct))
 
         # Tatonnement target based on pct imbalance
@@ -244,10 +259,8 @@ class Market:
         self.price = max(0.01, (1 - cfg.price_alpha) * self.price + cfg.price_alpha * p_target)
 
     def step(self,
-             pop: Population,
              q_consumer: int,
              q_firm: float,
-             rng_entry: np.random.Generator,
              tick: int,
              records: list[dict],
              good_label_in_record: bool = False
@@ -260,10 +273,10 @@ class Market:
 
         # 1) firms choose quantities at current price
         self._update_firms(tick)
-        q_supply = self._supply()
+        supply_total = self._supply()
         active_firms = sum(1 for f in self.firms if f.active)
 
-        # 3) clear market with separated consumer and firm demand
+        # 2) clear market with separated consumer and firm demand
 
         # pyrefly: ignore [bad-unpacking]
         (
@@ -271,25 +284,23 @@ class Market:
             q_bought_consumer,
             sales_by_firm,
         ) = self._clear_market(
-            cons_desired_q=q_consumer,
-            firm_desired_q=q_firm,
-            q_supply=q_supply,
+            demand_from_cons=q_consumer,
+            demand_from_firms=q_firm,
+            supply_total=supply_total,
             # needs=needs,
         )
 
-        # 4) finance and firm exit
+        # 3) finance and firm exit
         TR_total, TC_total, Profit_total = self._book_finance(sales_by_firm)
         self._remove_inactive()
 
-        # 5) concentration
-        hhi = self._hhi(sales_by_firm, q_supply)
-
-        # 6) record tick
+        # 4) record tick
         q_realized_firm = q_bought_total - q_bought_consumer
+        hhi = self._hhi(sales_by_firm, supply_total)
         rec = {
             "tick": tick,
             "price": self.price,
-            "q_supply": q_supply,
+            "supply_total": supply_total,
             "q_demand": q_demand_total,
             "q_demand_consumer": q_consumer,
             "q_demand_firm": q_firm,
@@ -306,6 +317,6 @@ class Market:
             rec["good"] = self.good
         records.append(rec)
 
-        # 7) price update uses TOTAL demand (consumer + firm)
-        self._price_update(q_demand_total, q_supply)
+        # 5) price update uses TOTAL demand (consumer + firm)
+        self._price_update(q_demand_total, supply_total)
         return Profit_total

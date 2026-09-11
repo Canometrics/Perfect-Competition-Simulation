@@ -48,13 +48,13 @@ class Country:
         return cls(provinces=provinces, weights=weights, markets=markets)
 
     # NATIONAL demand - sum provincial demands at given prices
-    def demand_for_all_goods(self, prices: dict[gds.GoodID, float]) -> dict[gds.GoodID, int]:
+    def national_demand(self, prices: dict[gds.GoodID, float]) -> dict[gds.GoodID, int]:
         agg: dict[gds.GoodID, int] = {g: 0 for g in prices}
         for province in self.provinces.values():
             pop = province.population
             if pop is None:
                 continue
-            d = pop.demand_for_all_goods(prices)
+            d = pop.pop_demand(prices)
             for g, q in d.items():
                 agg[g] = int(agg[g] + q)
         return agg
@@ -72,7 +72,7 @@ class Country:
         """
         next_id = start_id
         for m in self.markets.values():
-            next_id = m.seed(
+            next_id = m.seed_firms(
                 rng_init=rng_init,
                 n_firms=n_firms,
                 start_id=next_id,
@@ -142,7 +142,7 @@ class Country:
         demand_by_prov: dict[str, dict[gds.GoodID, int]] = {}
         for pname in prov_names:
             prov_obj = self.provinces[pname]
-            cons_d = prov_obj.population.demand_for_all_goods(prices)
+            cons_d = prov_obj.population.pop_demand(prices)
             total_for_p: dict[gds.GoodID, int] = {}
             for g in goods:
                 total_for_p[g] = int(cons_d.get(g, 0))
@@ -160,10 +160,8 @@ class Country:
             market = self.markets[g]
 
             profit = market.step(
-                pop=self,                        # Country has needs_per_good(...)
                 q_consumer=consumer_nat[g],
                 q_firm=input_demand_nat[g],
-                rng_entry=rng_entry,
                 tick=t,
                 records=records,
                 good_label_in_record=(len(goods) > 1),

@@ -36,7 +36,7 @@ class Population:
     def needs_per_good(self, good: gds.GoodID) -> tuple[int, int, int]:
         return self.needs_all_goods[good]
 
-    def demand_for_all_goods(self, prices: dict[gds.GoodID, float]) -> dict[gds.GoodID, int]:
+    def pop_demand(self, prices: dict[gds.GoodID, float]) -> dict[gds.GoodID, int]:
         B = self.budget
         demand: dict[gds.GoodID, int] = {g: 0 for g in gds.COBB_DOUGLAS_WEIGHTS}
 
