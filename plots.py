@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 
+
 def _groups(df):
     if "good" in df.columns and df["good"].nunique() > 1:
         return [(g, d.sort_values("tick")) for g, d in df.groupby("good", sort=False)]

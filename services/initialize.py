@@ -1,10 +1,10 @@
 from __future__ import annotations
+
 import copy
-from typing import Dict, Tuple
+
 import numpy as np
 
 import config.config as cfg
-import core.goods as gds
 import core.province as prov
 from core.country import Country
 
@@ -13,7 +13,7 @@ def initialize_world(
     seed: int = cfg.SEED,
     n_firms: int = cfg.N_FIRMS,
     start_id: int = 0,
-) -> Tuple[Country, Dict[str, prov.Province], np.random.Generator, int]:
+) -> tuple[Country, dict[str, prov.Province], np.random.Generator, int]:
     """
     Initialize Country, Provinces, Markets, and seed initial firms.
 
@@ -26,7 +26,7 @@ def initialize_world(
 
     # Safe copy of province specs
     specs = [copy.deepcopy(p) for p in prov.PROVINCES]
-    country = Country.from_specs(specs)
+    country = Country.build_country(specs)
     province_map = country.provinces
 
     # RNGs

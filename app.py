@@ -1,25 +1,17 @@
-import streamlit as st
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-
-# You can keep these imports if you plan to use plots.py helpers elsewhere,
-# but below we draw province charts inline for Streamlit-friendly rendering.
-from plots import (
-    plot_market, plot_tier_ladder,
-    plot_province_demand, plot_province_realized, plot_province_shares_stacked
-)
-
 import importlib
 import time
+
+import matplotlib.pyplot as plt
+import pandas as pd
+import streamlit as st
 
 # Local modules
 import config.config as cfg
 import simulation.sim as sim_module
 
-st.set_page_config(page_title="Supply–Demand Simulation", layout="wide")
+st.set_page_config(page_title="Supply-Demand Simulation", layout="wide")
 
-st.title("Interactive Supply–Demand Simulation")
+st.title("Interactive Supply-Demand Simulation")
 
 with st.sidebar:
     st.header("Configuration")
@@ -199,29 +191,6 @@ if run_btn:
         ax.grid(True)
         st.pyplot(fig)
 
-
-    # =========================
-    # Combined spending-tier plot (all goods together)
-    # Both goods equally important -> overall tier is the minimum tier across goods at each tick.
-    # =========================
-    if "tier_realized" in df_market.columns:
-        st.subheader("Spending Tier (combined across goods)")
-        tier_to_level = {"life_partial": 0, "life": 1, "everyday": 2, "luxury": 3}
-        labels = ["Partial Life", "Life", "Everyday", "Luxury"]
-
-        df_tier = df_market[["tick", "good", "tier_realized"]].copy()
-        df_tier["level"] = df_tier["tier_realized"].map(tier_to_level).fillna(0)
-
-        # For each tick, take the minimum level across goods (bottleneck logic)
-        combined = df_tier.groupby("tick", as_index=False)["level"].min()
-
-        fig, ax = plt.subplots()
-        ax.plot(combined["tick"], combined["level"], drawstyle="steps-post", linestyle="--", label="Combined (min across goods)")
-        ax.set_yticks([0, 1, 2, 3], labels=labels)
-        ax.set_xlabel("Tick"); ax.set_ylabel("Tier level")
-        ax.set_title("Highest Spending Tier Reached (Combined)")
-        ax.legend(); ax.grid(True)
-        st.pyplot(fig)
 
     # =========================
     # Province views (demand, realized, and stacked shares)

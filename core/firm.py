@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Optional, Tuple, List, Dict, TYPE_CHECKING
-from enum import Enum
 import math
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import TYPE_CHECKING
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
 import config.config as cfg
 import core.goods as gds
@@ -38,7 +38,7 @@ class FirmType(Enum):
 class Firm:
     id: int
     good: gds.GoodID
-    province: "Province"
+    province: Province
     FC: float
     MC: float
     capacity: int
@@ -46,15 +46,15 @@ class Firm:
 
     firm_type: FirmType = field(init=False)
 
-    base_MC: Optional[float] = None
-    base_capacity: Optional[float] = None
-    resource_rights: Optional[float] = None
+    base_MC: float | None = None
+    base_capacity: float | None = None
+    resource_rights: float | None = None
 
     # what inputs per unit of this firm's output?
-    input_requirements: Dict[gds.GoodID, float] = field(init=False)
+    input_requirements: dict[gds.GoodID, float] = field(init=False)
 
     # stock of inputs (not yet fully used)
-    input_inventory: Dict[gds.GoodID, int] = field(init=False)
+    input_inventory: dict[gds.GoodID, int] = field(init=False)
     output_inventory: int = 0
 
     employees: int = 0
@@ -65,13 +65,13 @@ class Firm:
     treasury: float = 0.0
     neg_treasury_streak: int = 0
 
-    _rows: List[Dict] = field(default_factory=list, repr=False)
+    _rows: list[dict] = field(default_factory=list, repr=False)
 
-    _cached_df: Optional[pd.DataFrame] = field(default=None, repr=False)
-    _last_quantity: Optional[float] = None
+    _cached_df: pd.DataFrame | None = field(default=None, repr=False)
+    _last_quantity: float | None = None
 
     @property
-    def last_quantity(self) -> Optional[float]:
+    def last_quantity(self) -> float | None:
         return self._last_quantity
 
     @property
@@ -96,7 +96,7 @@ class Firm:
 
         # production recipe: inputs per unit of this firm's output good
         self.input_requirements = gds.PRODUCTION_RECIPES.get(self.good, {}).get('inputs', {}).copy()
-        self.input_inventory = {g: 0 for g in self.input_requirements.keys()}
+        self.input_inventory = {g: 0 for g in self.input_requirements}
 
         if self.treasury == 0.0 and self.start_capital != 0.0: # <- this exists as a safeguard for good reason
             self.treasury = float(self.start_capital)
@@ -106,7 +106,7 @@ class Firm:
 
         self.base_capacity = float(self.capacity)
 
-    def update_input_cost(self, prices: Dict[gds.GoodID, float], wage: float) -> None:
+    def update_input_cost(self, prices: dict[gds.GoodID, float], wage: float) -> None:
         """
         Update this firm's MC to include:
           - the cost of its input bundle at current prices (for Manu firms)
@@ -271,8 +271,7 @@ class Firm:
                 self.employees -= fired
 
             # guard
-            if self.employees < 0:
-                self.employees = 0
+            self.employees = max(self.employees, 0)
 
         # Given actual employees, how much can we produce?
         q_from_labor = int(self.employees / intensity)
@@ -281,7 +280,7 @@ class Firm:
         return int(min(desired_q, q_from_labor))
 
 
-    def book_finance(self, price: float, sales: float) -> Tuple[float, float, float]:
+    def book_finance(self, price: float, sales: float) -> tuple[float, float, float]:
         TR = price * sales
         VC = self.MC * sales
         TC = self.FC + VC
@@ -387,7 +386,7 @@ def spawn_firms(
         start_id: int = 0,
         province: Province = None,
         max_share: float = 1.0,
-        ) -> List[Firm]:
+        ) -> list[Firm]:
 
     FC  = 20.0 * np.exp(rng.normal(cfg.FC_LOGMEAN, cfg.FC_LOGSD, size=n))
     MC  = np.clip(rng.normal(cfg.MC_MEAN, cfg.MC_SD, size=n), 0.5, None)
@@ -407,7 +406,7 @@ def spawn_firms(
         rights = np.zeros(n)
 
     # 2) Build firms, assigning resource_rights from the vector above
-    firms: List[Firm] = []
+    firms: list[Firm] = []
     for i in range(n):
         f = Firm(
             id=start_id + i,

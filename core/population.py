@@ -1,14 +1,8 @@
-from typing import Dict, Tuple,TypedDict
-from dataclasses import dataclass, field
 import math
-from copy import deepcopy
-import config.config as cfg
+from dataclasses import dataclass
+
 import core.goods as gds
 
-class ClassType(TypedDict):
-    lower: str
-    middle: str
-    upper: str
 
 @dataclass
 class Population:
@@ -16,11 +10,6 @@ class Population:
     income_pc: float
 
     number_employed: int =0
-    # class_type: ClassType
-
-    goods_for_tier: Dict[gds.GoodID, Dict[str, float]] = field(
-        default_factory=lambda: deepcopy(gds.NEEDS_PER_GOOD)
-    )
 
     # DEMAND MECHANICS
     @property
@@ -29,11 +18,11 @@ class Population:
     # later implement MPS/C
 
     @property
-    def needs_all_goods(self) -> Dict[gds.GoodID, Tuple[int, int, int]]:
+    def needs_all_goods(self) -> dict[gds.GoodID, tuple[int, int, int]]:
         """
         Return needs for every good, dynamically,
         """
-        out: Dict[gds.GoodID, Tuple[int, int, int]] = {}
+        out: dict[gds.GoodID, tuple[int, int, int]] = {}
 
         for good, tiers in self.goods_for_tier.items():
             q_life  = math.ceil(tiers['life']     * self.size / 100)
@@ -44,18 +33,18 @@ class Population:
 
         return out
 
-    def needs_per_good(self, good: gds.GoodID) -> Tuple[int, int, int]:
+    def needs_per_good(self, good: gds.GoodID) -> tuple[int, int, int]:
         return self.needs_all_goods[good]
 
-    def demand_for_all_goods(self, prices: Dict[gds.GoodID, float]) -> Dict[gds.GoodID, int]:
+    def demand_for_all_goods(self, prices: dict[gds.GoodID, float]) -> dict[gds.GoodID, int]:
         B = self.budget
-        demand: Dict[gds.GoodID, int] = {g: 0 for g in cfg.COBB_DOUGLAS_WEIGHTS}
+        demand: dict[gds.GoodID, int] = {g: 0 for g in gds.COBB_DOUGLAS_WEIGHTS}
 
-        total_weight = sum(cfg.COBB_DOUGLAS_WEIGHTS.values())
+        total_weight = sum(gds.COBB_DOUGLAS_WEIGHTS.values())
         if total_weight <= 0 or B <= 0:
             return demand
 
-        for g, w in cfg.COBB_DOUGLAS_WEIGHTS.items():
+        for g, w in gds.COBB_DOUGLAS_WEIGHTS.items():
             p = prices.get(g, 0.0)
             if p <= 0:
                 continue

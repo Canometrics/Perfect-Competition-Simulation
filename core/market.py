@@ -1,14 +1,15 @@
 from __future__ import annotations
-from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
-from collections import deque
+
 import math
+from collections import deque
+from dataclasses import dataclass, field
+
 import numpy as np
 
 import config.config as cfg
 import core.goods as gds
+from core.firm import Firm, FirmType, spawn_firms
 from core.population import Population
-from core.firm import Firm, spawn_firms, FirmType
 from core.province import Province
 
 
@@ -17,8 +18,8 @@ class Market:
     good: gds.GoodID
     price: float
     # national market knows how to distribute firms over provinces
-    province_weights: Dict[str, float] = field(default_factory=dict)
-    firms: List[Firm] = field(default_factory=list)
+    province_weights: dict[str, float] = field(default_factory=dict)
+    firms: list[Firm] = field(default_factory=list)
     profit_hist: deque[tuple[float, int]] = field(default_factory=lambda: deque(maxlen=cfg.ENTRY_WINDOW))
 
     def __post_init__(self):
@@ -27,7 +28,6 @@ class Market:
             self.firm_type = FirmType.RGO
         else:
             self.firm_type = FirmType.Manu
-
 
     def _sample_province(self, rng: np.random.Generator) -> str:
         names = list(self.province_weights.keys())
@@ -40,7 +40,7 @@ class Market:
         rng_init: np.random.Generator,
         n_firms: int,
         start_id: int,
-        provinces: Dict[str, Province],        # <-- keep this
+        provinces: dict[str, Province],        # <-- keep this
     ) -> int:
         # split initial firms by weights
         names = list(self.province_weights.keys())
@@ -77,7 +77,7 @@ class Market:
         next_id: int,
         tick_profit: float,
         active_firms: int,
-        provinces: Dict[str, Province],
+        provinces: dict[str, Province],
     ) -> int:
         self.profit_hist.append((tick_profit, max(1, active_firms)))
 
@@ -130,9 +130,9 @@ class Market:
         # 3) Aggregating supply
         return int(sum(f.q for f in self.firms))
 
-    def _hhi(self, sales_by_firm: Dict[int, float], fallback_supply: int) -> float:
+    def _hhi(self, sales_by_firm: dict[int, float], fallback_supply: int) -> float:
         """
-        HHI on 0–10000 scale using sales shares this tick.
+        HHI on 0-10000 scale using sales shares this tick.
         If no sales happened, fallback to shares of supply (q) to avoid NaN.
         """
         # try based on sales
@@ -156,7 +156,7 @@ class Market:
         cons_desired_q: int,
         firm_desired_q: int,
         q_supply: int,
-        needs: tuple[int, int, int],
+        # needs: tuple[int, int, int],
     ) -> tuple[int, int, str, dict[str, int], dict[int, float]]:
         """
         Clear the market given separate consumer and firm demand.
@@ -169,8 +169,6 @@ class Market:
         Returns:
             q_bought_total: total quantity bought (consumer + firm)
             q_bought_consumer: quantity bought by consumers
-            tier_realized: label based on consumer tiers only
-            tiers_bought: dict of consumer quantities by tier
             sales_by_firm: allocation of total sales to firms
         """
         cons_desired_q = int(max(0, cons_desired_q))
@@ -184,34 +182,8 @@ class Market:
         # Consumers can never buy more than their own desired quantity
         q_bought_consumer = min(cons_desired_q, q_bought_total)
 
-        # derive tier caps from needs (consumer side)
-        q_life, q_every, q_lux = needs
+        sales_by_firm: dict[int, float] = {f.id: 0.0 for f in self.firms}
 
-        # allocate CONSUMER purchases into tiers
-        life_bought = min(q_bought_consumer, q_life)
-        rem = q_bought_consumer - life_bought
-        every_bought = min(rem, q_every)
-        rem -= every_bought
-        lux_bought = min(rem, q_lux)
-
-        tiers_bought = {
-            "life": life_bought,
-            "everyday": every_bought,
-            "luxury": lux_bought,
-        }
-
-        # label of highest fully reached consumer tier
-        if life_bought < q_life:
-            tier_realized = "life_partial"
-        elif every_bought < q_every:
-            tier_realized = "life"
-        elif lux_bought < q_lux:
-            tier_realized = "everyday"
-        else:
-            tier_realized = "luxury"
-
-        # proportional allocation of TOTAL sales (consumer + firm) to firms
-        sales_by_firm: Dict[int, float] = {f.id: 0.0 for f in self.firms}
         if q_supply > 0 and q_bought_total > 0:
             for f in self.firms:
                 if not f.active or f.q <= 0:
@@ -219,9 +191,9 @@ class Market:
                 share = f.q / q_supply
                 sales_by_firm[f.id] = min(f.q, share * q_bought_total)
 
-        return q_bought_total, q_bought_consumer, tier_realized, tiers_bought, sales_by_firm
+        return q_bought_total, q_bought_consumer, sales_by_firm
 
-    def _book_finance(self, sales_by_firm: Dict[int, float]) -> Tuple[float, float, float]:
+    def _book_finance(self, sales_by_firm: dict[int, float]) -> tuple[float, float, float]:
         # 6) With sales by firm, calculate finances
         TR_total = TC_total = Profit_total = 0.0
         for f in self.firms:
@@ -271,42 +243,17 @@ class Market:
         # Exponential smoothing towards target, this is lowkey extra
         self.price = max(0.01, (1 - cfg.price_alpha) * self.price + cfg.price_alpha * p_target)
 
-
-    # # def _apply_shocks(self, tick: int) -> None:
-    #     # 9) Shocks
-    #     if cfg.USE_CAPACITY_SHOCK and tick == cfg.SHOCK_TICK:
-    #         for f in self.firms:
-    #             if f.base_capacity is None:
-    #                 f.base_capacity = float(f.capacity)
-    #             f.capacity = int(f.base_capacity * cfg.CAP_MULT_DURING_SHOCK)
-
-    #     if cfg.USE_CAPACITY_SHOCK and cfg.SHOCK_DURATION > 0 and tick == cfg.SHOCK_TICK + cfg.SHOCK_DURATION:
-    #         for f in self.firms:
-    #             if f.base_capacity is not None:
-    #                 f.capacity = int(f.base_capacity)
-
-    #     if cfg.USE_MC_SHOCK and tick == cfg.SHOCK_TICK:
-    #         for f in self.firms:
-    #             if f.base_MC is None:
-    #                 f.base_MC = float(f.MC)
-    #             f.MC = float(f.base_MC * cfg.MC_MULT_DURING_SHOCK)
-
-    #     if cfg.USE_MC_SHOCK and cfg.SHOCK_DURATION > 0 and tick == cfg.SHOCK_TICK + cfg.SHOCK_DURATION:
-    #         for f in self.firms:
-    #             if f.base_MC is not None:
-    #                 f.MC = float(f.base_MC)
-
     def step(self,
              pop: Population,
              q_consumer: int,
              q_firm: float,
              rng_entry: np.random.Generator,
              tick: int,
-             records: List[Dict],
+             records: list[dict],
              good_label_in_record: bool = False
              ) -> int:
         
-        # NATIONAL: 'pop' can be a Country; we only use pop.needs_per_good(self.good)
+        # NATIONAL:
         q_consumer = int(max(0, q_consumer))
         q_firm = int(max(0, q_firm))
         q_demand_total = q_consumer + q_firm
@@ -314,24 +261,20 @@ class Market:
         # 1) firms choose quantities at current price
         self._update_firms(tick)
         q_supply = self._supply()
-
         active_firms = sum(1 for f in self.firms if f.active)
 
-        # 2) national needs thresholds (life, everyday, luxury) for CONSUMERS
-        needs = pop.needs_per_good(self.good)
-
         # 3) clear market with separated consumer and firm demand
+
+        # pyrefly: ignore [bad-unpacking]
         (
             q_bought_total,
             q_bought_consumer,
-            tier_realized,
-            tiers_bought,
             sales_by_firm,
         ) = self._clear_market(
             cons_desired_q=q_consumer,
             firm_desired_q=q_firm,
             q_supply=q_supply,
-            needs=needs,
+            # needs=needs,
         )
 
         # 4) finance and firm exit
@@ -353,10 +296,6 @@ class Market:
             "q_realized": q_bought_total,
             "q_realized_consumer": q_bought_consumer,
             "q_realized_firm": q_realized_firm,
-            "life": tiers_bought["life"],
-            "everyday": tiers_bought["everyday"],
-            "luxury": tiers_bought["luxury"],
-            "tier_realized": tier_realized,
             "revenue_total": TR_total,
             "cost_total": TC_total,
             "profit_total": Profit_total,
@@ -369,5 +308,4 @@ class Market:
 
         # 7) price update uses TOTAL demand (consumer + firm)
         self._price_update(q_demand_total, q_supply)
-        # self._apply_shocks(tick)
         return Profit_total

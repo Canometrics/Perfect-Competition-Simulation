@@ -1,15 +1,10 @@
-from typing import Dict
-
 # ---------------- CONFIG ----------------
 SEED = 7
 T = 600                 # ticks
 tatonnement_speed = 0.8        # price adjustment speed
 price_alpha = 0.3       # price smoothing factor (to avoid extremely jagged prices)
 PRICE_ELASTICITY = 1.5
-COBB_DOUGLAS_WEIGHTS: Dict[str, float] = {
-    'consgoods': 0.6,
-    'food':      0.4,
-}
+
 # Population config
 POP_SIZE = 1000
 INCOME_PC = 900         # income per 100 ppl per tick
