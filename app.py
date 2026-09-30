@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 
-# Local modules
 import config.config as cfg
 import simulation.sim as sim_module
 
@@ -34,25 +33,10 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("Firms and Entry")
     N_FIRMS = st.number_input("Initial # firms", min_value=1, max_value=10000, value=int(cfg.N_FIRMS), step=1)
-    PLANNING_RULE = st.selectbox(
-    "Firm quantity planning rule",
-    options=["optimize", "guess"],
-    index=0 if getattr(cfg, "PLANNING_RULE", "optimize") == "optimize" else 1,
-    help="optimize: margin-based target with smoothing | guess: ±5% MC band heuristic"
-)
 
     ENTRY_ALPHA = st.number_input("Entry alpha", min_value=0.0, max_value=0.1, value=float(cfg.ENTRY_ALPHA), step=0.0005, format="%.4f")
     ENTRY_WINDOW = st.number_input("Entry window (ticks)", min_value=1, max_value=200, value=int(cfg.ENTRY_WINDOW), step=1)
     ENTRY_MAX_PER_TICK = st.number_input("Entry max per tick (pct of all firms)", min_value=0.0, max_value=1.0, value=float(cfg.ENTRY_MAX_PER_TICK), step=0.01)
-
-    # st.markdown("---")
-    # st.subheader("Shock")
-    # SHOCK_TICK = st.number_input("Shock tick", min_value=0, max_value=100000, value=int(cfg.SHOCK_TICK), step=1)
-    # SHOCK_DURATION = st.number_input("Shock duration (0 = permanent)", min_value=0, max_value=100000, value=int(cfg.SHOCK_DURATION), step=1)
-    # USE_MC_SHOCK = st.checkbox("Use MC (input cost) shock", value=getattr(cfg, "USE_MC_SHOCK", True))
-    # MC_MULT_DURING_SHOCK = st.number_input("MC multiplier during shock", min_value=0.01, max_value=100.0, value=float(getattr(cfg, "MC_MULT_DURING_SHOCK", 2.0)), step=0.1)
-    # USE_CAPACITY_SHOCK = st.checkbox("Use capacity shock", value=getattr(cfg, "USE_CAPACITY_SHOCK", False))
-    # CAP_MULT_DURING_SHOCK = st.number_input("Capacity multiplier during shock", min_value=0.01, max_value=10.0, value=float(getattr(cfg, "CAP_MULT_DURING_SHOCK", 0.5)), step=0.05)
 
     st.markdown("---")
     st.subheader("Treasury")
@@ -68,19 +52,11 @@ def set_config():
     cfg.T = int(T)
     cfg.tatonnement_speed = float(tatonnement_speed)
     cfg.price_alpha = float(price_alpha)
-    cfg.PLANNING_RULE = str(PLANNING_RULE)
 
     cfg.N_FIRMS = int(N_FIRMS)
     cfg.ENTRY_ALPHA = float(ENTRY_ALPHA)
     cfg.ENTRY_WINDOW = int(ENTRY_WINDOW)
     cfg.ENTRY_MAX_PER_TICK = float(ENTRY_MAX_PER_TICK)
-
-    # cfg.SHOCK_TICK = int(SHOCK_TICK)
-    # cfg.SHOCK_DURATION = int(SHOCK_DURATION)
-    # cfg.USE_MC_SHOCK = bool(USE_MC_SHOCK)
-    # cfg.MC_MULT_DURING_SHOCK = float(MC_MULT_DURING_SHOCK)
-    # cfg.USE_CAPACITY_SHOCK = bool(USE_CAPACITY_SHOCK)
-    # cfg.CAP_MULT_DURING_SHOCK = float(CAP_MULT_DURING_SHOCK)
 
     # Treasury
     cfg.START_CAPITAL = float(START_CAPITAL)
@@ -127,8 +103,8 @@ if run_btn:
                     ax.plot(df_g["tick"], df_g["q_demand"], label="Quantity Demanded")
                 if "q_realized" in df_g.columns:
                     ax.plot(df_g["tick"], df_g["q_realized"], label="Quantity Bought")
-                if "q_supply" in df_g.columns:
-                    ax.plot(df_g["tick"], df_g["q_supply"], label="Quantity Supplied")
+                if "supply_total" in df_g.columns:
+                    ax.plot(df_g["tick"], df_g["supply_total"], label="Quantity Supplied")
                 ax.set_xlabel("Tick"); ax.set_ylabel("Units"); ax.legend(); ax.set_title("Quantities")
                 ax.grid(True)
                 st.pyplot(fig)

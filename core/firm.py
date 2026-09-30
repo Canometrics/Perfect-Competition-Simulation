@@ -27,7 +27,6 @@ _HISTORY_COLS = [
     "output_inventory",
 ]
 
-
 class FirmType(Enum):
     RGO = "rgo"
     Manu = "manu"
@@ -36,37 +35,39 @@ class FirmType(Enum):
 
 @dataclass
 class Firm:
+    # --- Identity ---
     id: int
     good: gds.GoodID
     province: Province
-    FC: float
-    MC: float
+
+    # --- Core economics (required at construction) ---
+    FC: float          # fixed cost
+    MC: float          # marginal cost
     capacity: int
-    q: float
+    q: float           # current output/quantity
 
+    # --- Derived / computed fields (set in __post_init__, not passed in) ---
     firm_type: FirmType = field(init=False)
+    input_requirements: dict[gds.GoodID, float] = field(init=False)
+    input_inventory: dict[gds.GoodID, int] = field(init=False)
 
+    # --- Costs and rights ---
     base_MC: float | None = None
     base_capacity: float | None = None
     resource_rights: float | None = None
 
-    # what inputs per unit of this firm's output?
-    input_requirements: dict[gds.GoodID, float] = field(init=False)
-
-    # stock of inputs (not yet fully used)
-    input_inventory: dict[gds.GoodID, int] = field(init=False)
+    # --- Production state ---
     output_inventory: int = 0
-
     employees: int = 0
-
     active: bool = True
 
+    # --- Financials ---
     start_capital: float = 0.0
     treasury: float = 0.0
     neg_treasury_streak: int = 0
 
+    # --- Internal bookkeeping / caching ---
     _rows: list[dict] = field(default_factory=list, repr=False)
-
     _cached_df: pd.DataFrame | None = field(default=None, repr=False)
     _last_quantity: float | None = None
 
@@ -133,56 +134,7 @@ class Firm:
         # 3) Effective marginal cost
         self.MC = float(self.base_MC + input_cost_per_unit + labor_cost_per_unit)
 
-    def _effective_capacity(self) -> int:
-        """
-        Capacity used for production / planning:
-        - RGO firms: limited by their share of the province's resource pool
-        - Manu firms: limited by their normal factory capacity
-        """
-        # Manufacturing: normal capacity
-        if self.firm_type is not FirmType.RGO:
-            return int(self.capacity)
-
-        # RGO firms: compute resource-limited capacity
-        pool = self.province.resources.get(self.good, 0)
-
-        rights = self.resource_rights or 0.0
-        self.capacity = int(max(0, pool * rights))
-
-        return self.capacity
-
     def plan_quantity(self, price: float) -> int:
-        if cfg.PLANNING_RULE == "guess":
-            return self.plan_quantity_guessing(price)
-        return self.plan_quantity_optimize(price)
-
-
-    def plan_quantity_guessing(self, price: float) -> int:
-        if not self.active:
-            return 0
-
-        c = self._effective_capacity()
-
-        # First production tick -> start moderately
-        if self.last_quantity is None:
-            return int(c * 0.05)
-
-        # --- ±5 percent MC band ---
-        lower = 0.97 * self.MC
-        upper = 1.03 * self.MC
-
-        # If price in band, keep quantity stable
-        if lower <= price <= upper:
-            return int(self.last_quantity)
-
-        # Price too low -> scale down
-        if price < lower:
-            return int(max(0.0, self.last_quantity - c * 0.05))
-
-        # Price too high -> scale up
-        return int(min(self.last_quantity + c * 0.05, c))
-
-    def plan_quantity_optimize(self, price: float) -> int: # this is a better option!
         if not self.active:
             return 0
 
@@ -191,12 +143,12 @@ class Firm:
         if self.MC <= 0:
             return c
 
-        # profit margin as fraction of price: 0 when price=MC, 1 when price→∞
-        margin = max(0.0, (price - self.MC) / price)
-        target = int(c * margin)
-
         if self.last_quantity is None:
             return int(c * 0.05)
+
+        # profit margin as fraction of price: 0 when price=MC, 1 when price -> infinity
+        margin = max(0.0, (price - self.MC) / price)
+        target = int(c * margin)
 
         # smooth adjustment toward target — max 10% capacity step per tick
         step = c * 0.10
@@ -279,7 +231,6 @@ class Firm:
         # Final output cannot exceed planned quantity
         return int(min(desired_q, q_from_labor))
 
-
     def book_finance(self, price: float, sales: float) -> tuple[float, float, float]:
         TR = price * sales
         VC = self.MC * sales
@@ -298,7 +249,7 @@ class Firm:
             # firm just died this tick
             self.active = False
 
-            # Only RGOs have meaningful resource rights to free
+            # Only RGOs have resource rights to free
             if getattr(self, "firm_type", None) is FirmType.RGO and hasattr(self, "province"):
                 prov = self.province
                 good = self.good
@@ -334,6 +285,24 @@ class Firm:
         self._cached_df = None  # invalidate cache
         return TR, TC, profit
 
+    def _effective_capacity(self) -> int:
+        """
+        Capacity used for production / planning:
+        - RGO firms: limited by their share of the province's resource pool
+        - Manu firms: limited by their normal factory capacity
+        """
+        # Manufacturing: normal capacity
+        if self.firm_type is not FirmType.RGO:
+            return int(self.capacity)
+
+        # RGO firms: compute resource-limited capacity
+        pool = self.province.resources.get(self.good, 0)
+
+        rights = self.resource_rights or 0.0
+        self.capacity = int(max(0, pool * rights))
+
+        return self.capacity
+
     def _log_tick(self, tick: int, price: float, q: float):
         self._rows.append({
             "tick": tick,
@@ -348,7 +317,6 @@ class Firm:
             "output_inventory": float(self.output_inventory),
         })
         self._cached_df = None  # invalidate cache
-
 
 def draw_resource_rights(
     province: Province,
@@ -376,7 +344,6 @@ def draw_resource_rights(
     # update province bookkeeping
     province.rights_given[good] = used + rights.sum()
     return rights
-
 
 def spawn_firms(
         good: gds.GoodID,

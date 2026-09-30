@@ -8,22 +8,25 @@ from core.population import Population
 
 @dataclass
 class Province:
+    # --- Required ---
     name: str
     pop_size: int
-    income_pc: float    # income per 100 people
-    firm_weight: float  # relative weight for seeding entrants and initial firms
-    # Optional resource pools (only used for goods in RAW_GOODS)
-    resources: dict[str, int] = field(default_factory=dict)
-    firms: list[Firm] = field(default_factory=list)
-    rights_given: dict[gds.GoodID, float] = field(default_factory=lambda: {g: 0.0 for g in gds.GOODS})
+    income_pc: float        # income per 100 people
+    firm_weight: float      # relative weight for seeding initial firms and entrants
+
+    # --- Optional state ---
     population: Population | None = None
+    firms: list[Firm] = field(default_factory=list)
+    resources: dict[str, int] = field(default_factory=dict)  # only used for goods in RAW_GOODS
+    rights_given: dict[gds.GoodID, float] = field(
+        default_factory=lambda: {good: 0.0 for good in gds.GOODS}
+    )
 
     def attach_population(self):
         self.population = Population(
             size=self.pop_size,
             income_pc=self.income_pc
         )
-
 
 def normalized_weights(specs: list[Province]) -> dict[str, float]:
     total = sum(p.firm_weight for p in specs) or 1.0 

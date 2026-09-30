@@ -13,12 +13,9 @@ from core.population import Population
 
 @dataclass
 class Country:
-    # province name -> Province object (which embeds a Population)
-    provinces: dict[str, prov.Province]
-    # weights used for firm seeding and entry sampling
-    weights: dict[str, float]
-    # national markets, one per good
-    markets: dict[gds.GoodID, Market]
+    provinces: dict[str, prov.Province]      # province name -> Province (each embeds a Population)
+    weights: dict[str, float]                # province name -> weight for firm seeding and entry sampling
+    markets: dict[gds.GoodID, Market]        # one national market per good
 
     @classmethod
     def build_country(cls, specs: list[prov.Province]) -> Country:
@@ -65,11 +62,12 @@ class Country:
         province_map: dict[str, prov.Province],
         n_firms: int,
         start_id: int = 0,
-    ) -> int:
+        ) -> int:
         """
         Seed all markets with initial firms, distributed across provinces
         according to self.weights.
         """
+        
         next_id = start_id
         for m in self.markets.values():
             next_id = m.seed_firms(

@@ -14,12 +14,16 @@ from core.province import Province
 
 @dataclass
 class Market:
+    # --- Required ---
     good: gds.GoodID
     price: float
-    # national market knows how to distribute firms over provinces
-    province_weights: dict[str, float] = field(default_factory=dict)
+
+    # --- Optional state ---
+    province_weights: dict[str, float] = field(default_factory=dict)  # how the national market spreads firms across provinces
     firms: list[Firm] = field(default_factory=list)
-    profit_hist: deque[tuple[float, int]] = field(default_factory=lambda: deque(maxlen=cfg.ENTRY_WINDOW))
+    profit_hist: deque[tuple[float, int]] = field(
+        default_factory=lambda: deque(maxlen=cfg.ENTRY_WINDOW)
+    )
 
     def __post_init__(self):
         """
@@ -96,7 +100,7 @@ class Market:
         avg_profit_per_firm = (
             sum(p / n for p, n in self.profit_hist) / len(self.profit_hist)
             if self.profit_hist else 0.0
-)
+        )
         profit_pos = max(avg_profit_per_firm, 0.0)
         p_entry = 1.0 - math.exp(-cfg.ENTRY_ALPHA * profit_pos)
 
@@ -189,14 +193,13 @@ class Market:
         demand_from_cons: int,
         demand_from_firms: int,
         supply_total: int,
-    ) -> tuple[int, int, str, dict[str, int], dict[int, float]]:
+        ) -> tuple[int, int, dict[int, float]]:
         """
         Clear the market given separate consumer and firm demand.
 
         - demand_from_cons: consumer demand for this good
         - demand_from_firms: firm input demand for this good
         - supply_total: total quantity supplied by firms this tick
-        - needs: (life, everyday, luxury) thresholds for CONSUMER only
 
         Returns:
             q_bought_total: total quantity bought (consumer + firm)
@@ -278,7 +281,6 @@ class Market:
 
         # 2) clear market with separated consumer and firm demand
 
-        # pyrefly: ignore [bad-unpacking]
         (
             q_bought_total,
             q_bought_consumer,
@@ -287,7 +289,6 @@ class Market:
             demand_from_cons=q_consumer,
             demand_from_firms=q_firm,
             supply_total=supply_total,
-            # needs=needs,
         )
 
         # 3) finance and firm exit

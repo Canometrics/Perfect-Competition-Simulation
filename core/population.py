@@ -1,4 +1,3 @@
-import math
 from dataclasses import dataclass
 
 import core.goods as gds
@@ -9,32 +8,13 @@ class Population:
     size: int
     income_pc: float
 
-    number_employed: int =0
+    number_employed: int = 0
 
     # DEMAND MECHANICS
     @property
     def budget(self) -> float:
         return self.size * self.income_pc / 100
     # later implement MPS/C
-
-    @property
-    def needs_all_goods(self) -> dict[gds.GoodID, tuple[int, int, int]]:
-        """
-        Return needs for every good, dynamically,
-        """
-        out: dict[gds.GoodID, tuple[int, int, int]] = {}
-
-        for good, tiers in self.goods_for_tier.items():
-            q_life  = math.ceil(tiers['life']     * self.size / 100)
-            q_every = math.ceil(tiers['everyday'] * self.size / 100)
-            q_lux   = math.ceil(tiers['luxury']   * self.size / 100)
-
-            out[good] = (q_life, q_every, q_lux)
-
-        return out
-
-    def needs_per_good(self, good: gds.GoodID) -> tuple[int, int, int]:
-        return self.needs_all_goods[good]
 
     def pop_demand(self, prices: dict[gds.GoodID, float]) -> dict[gds.GoodID, int]:
         B = self.budget
@@ -52,10 +32,6 @@ class Population:
             demand[g] = budget_share / p
 
         return demand
-
-
-
-
 
     # LABOR MARKET MECHANICS
     @property

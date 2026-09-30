@@ -5,7 +5,9 @@ def is_raw(good:GoodID) -> bool:
     return good in RAW_GOODS
 
 def initial_price(good: GoodID) -> float:
-    """Return the initial price for a given good."""
+    """
+    Return the initial price for a given good.
+    """
     return INITIAL_PRICES[good]
 
 GOODS: Goods = ['consgoods', 'iron', 'wood', 'grain', 'food']

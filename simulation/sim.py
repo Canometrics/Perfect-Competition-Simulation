@@ -11,9 +11,7 @@ def simulate_multi(T: int | None = None, p0: float | None = None) -> tuple[pd.Da
 
     goods = gds.GOODS
 
-    country, _province_map, rng_entry, next_id = initialize_world(
-        start_id=0,
-    )
+    country, _province_map, rng_entry, next_id = initialize_world(start_id=0)
 
     records: list[dict] = []
     prov_records: list[dict] = []  # collect per-province panel rows
