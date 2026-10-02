@@ -135,6 +135,9 @@ class Firm:
         self.MC = float(self.base_MC + input_cost_per_unit + labor_cost_per_unit)
 
     def plan_quantity(self, price: float) -> int:
+        """
+        called in country.country_step
+        """
         if not self.active:
             return 0
 
@@ -180,7 +183,7 @@ class Firm:
         q_final = self.hire_and_fire(q_to_produce, hypothetical=False) + inv
 
         self.q = int(max(0, q_final))
-        self.q = q_to_produce # to disable labor market, this is not logically correct but it works
+        self.q = q_to_produce # to disable labor market, this is not logically correct but it makes things less janky
         self.output_inventory = 0
 
         self._log_tick(tick, price, self.q)
@@ -198,8 +201,6 @@ class Firm:
         # Labor needed per unit of output for this good
         recipe = gds.PRODUCTION_RECIPES.get(self.good, {})
         intensity = float(recipe.get("labor_intensity", 0.0))
-
-        desired_q = max(0, int(desired_q))
 
         # Desired headcount from planned output
         desired_headcount = int(max(0, math.ceil(desired_q * intensity)))
@@ -290,6 +291,9 @@ class Firm:
         Capacity used for production / planning:
         - RGO firms: limited by their share of the province's resource pool
         - Manu firms: limited by their normal factory capacity
+
+        If I ever make province resource pools dynamic, this would be helpful, but right now it is not needed
+        Called in plan_quantity()
         """
         # Manufacturing: normal capacity
         if self.firm_type is not FirmType.RGO:

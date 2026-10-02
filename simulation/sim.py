@@ -6,7 +6,7 @@ from core.firm import Firm
 from services.initialize import initialize_world
 
 
-def simulate_multi(T: int | None = None, p0: float | None = None) -> tuple[pd.DataFrame, list[Firm], pd.DataFrame]:
+def simulate_multi(T: int | None = None) -> tuple[pd.DataFrame, list[Firm], pd.DataFrame]:
     T = cfg.T if T is None else T
 
     goods = gds.GOODS

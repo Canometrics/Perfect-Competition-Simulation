@@ -104,10 +104,11 @@ class Country:
             next_id: updated next available firm id after entry
         """
 
+        # housekeeping
+        prov_names = list(self.provinces.keys())
+
         # 0) current prices per good from markets
-        prices: dict[gds.GoodID, float] = {
-            g: self.markets[g].price for g in goods
-        }
+        prices = self.current_prices()
 
         # 1) firms update their marginal cost based on input prices + wage
         for g in goods:
@@ -115,40 +116,48 @@ class Country:
             for f in market.firms:
                 f.update_input_cost(prices, wage=cfg.WAGE)
 
-        prov_names = list(self.provinces.keys())
+        # 2.1) provincial firm demand
+        demand_firm_province: dict[str, dict[gds.GoodID, float]] = {}
 
-      # 2) national firm input-demand per good (based on feasible output)
-        input_demand_nat: dict[gds.GoodID, float] = {g: 0.0 for g in goods}
+        for prov_name in prov_names:
+            prov_obj = self.provinces[prov_name]
+            prov_demand = {g: 0.0 for g in goods}
 
-        for g_out in goods:
-            market_out = self.markets[g_out]
-            for firm in market_out.firms:
-                # only firms with input requirements (manufacturing) create input demand
-                if not getattr(firm, "input_requirements", None):
+            for firm in prov_obj.firms:
+                if not firm.input_requirements:
                     continue
 
-                # planned output at current price
-                q_plan = firm.plan_quantity(price=market_out.price)
-                # feasible output given labor constraint (hypothetical = don't actually hire)
+                # price of the good THIS firm produces
+                price_out = self.markets[firm.good].price
+                q_plan = firm.plan_quantity(price=price_out)
                 q_feasible = firm.hire_and_fire(q_plan, hypothetical=True)
 
+                # convert planned output into input demand via the recipe
                 for g_in, units in firm.input_requirements.items():
-                    input_demand_nat[g_in] += q_feasible * units
+                    prov_demand[g_in] += q_feasible * units
 
+            demand_firm_province[prov_name] = prov_demand
 
-        # 3) per-province consumer demand (only households)
-        demand_by_prov: dict[str, dict[gds.GoodID, int]] = {}
-        for pname in prov_names:
-            prov_obj = self.provinces[pname]
+        # 2.2) national firm demand
+        demand_firm_nat: dict[gds.GoodID, float] = {g: 0.0 for g in goods}
+
+        demand_firm_nat: dict[gds.GoodID, int] = {
+            g: sum(demand_firm_province[p][g] for p in demand_firm_province) for g in goods
+        }
+
+        # 3.1) per-provincial consumer demand (only households)
+        demand_cons_province: dict[str, dict[gds.GoodID, int]] = {}
+        for prov_name in prov_names:
+            prov_obj = self.provinces[prov_name]
             cons_d = prov_obj.population.pop_demand(prices)
             total_for_p: dict[gds.GoodID, int] = {}
             for g in goods:
                 total_for_p[g] = int(cons_d.get(g, 0))
-            demand_by_prov[pname] = total_for_p
+            demand_cons_province[prov_name] = total_for_p
 
-        # 4) national consumer demand (sum over provinces)
-        consumer_nat: dict[gds.GoodID, int] = {
-            g: sum(demand_by_prov[p][g] for p in demand_by_prov) for g in goods
+        # 3.2) national consumer demand (sum over provinces)
+        demand_cons_nat: dict[gds.GoodID, int] = {
+            g: sum(demand_cons_province[p][g] for p in demand_cons_province) for g in goods
         }
 
         # 5) step markets and entry
@@ -158,8 +167,8 @@ class Country:
             market = self.markets[g]
 
             profit = market.step(
-                q_consumer=consumer_nat[g],
-                q_firm=input_demand_nat[g],
+                q_consumer=demand_cons_nat[g],
+                q_firm=demand_firm_nat[g],
                 tick=t,
                 records=records,
                 good_label_in_record=(len(goods) > 1),
@@ -174,8 +183,7 @@ class Country:
             total_employed = 0
             for prov_obj in self.provinces.values():
                 pop_obj = prov_obj.population
-                if pop_obj is not None:
-                    total_employed += int(getattr(pop_obj, "number_employed", 0))
+                total_employed += pop_obj.number_employed
             last["employment_total"] = int(total_employed)
 
             # firm entry for this good
@@ -189,15 +197,15 @@ class Country:
 
         # 6) allocate realized quantities back to provinces by consumer demand share
         for g in goods:
-            d_nat_cons = consumer_nat[g]
+            d_nat_cons = demand_cons_nat[g]
             if d_nat_cons <= 0:
                 # no consumer demand: everyone gets zero realized in province records
-                for pname in prov_names:
+                for prov_name in prov_names:
                     prov_records.append({
                         "tick": t,
-                        "province": pname,
+                        "province": prov_name,
                         "good": g,
-                        "q_demand": int(demand_by_prov[pname][g]),
+                        "q_demand": int(demand_cons_province[prov_name][g]),
                         "q_realized": 0,
                     })
                 continue
@@ -205,8 +213,8 @@ class Country:
             running_sum = 0
             alloc_rows: list[tuple[str, int, int]] = []
 
-            for i, pname in enumerate(prov_names):
-                d_p = int(demand_by_prov[pname][g])  # consumer-only demand
+            for i, prov_name in enumerate(prov_names):
+                d_p = int(demand_cons_province[prov_name][g])  # consumer-only demand
                 if i < len(prov_names) - 1:
                     share = d_p / d_nat_cons if d_nat_cons > 0 else 0.0
                     q_real_p = round(share * realized_nat[g])
@@ -214,12 +222,12 @@ class Country:
                 else:
                     # reconcile last province so totals match exactly
                     q_real_p = int(realized_nat[g] - running_sum)
-                alloc_rows.append((pname, d_p, q_real_p))
+                alloc_rows.append((prov_name, d_p, q_real_p))
 
-            for pname, d_p, q_real_p in alloc_rows:
+            for prov_name, d_p, q_real_p in alloc_rows:
                 prov_records.append({
                     "tick": t,
-                    "province": pname,
+                    "province": prov_name,
                     "good": g,
                     "q_demand": d_p,
                     "q_realized": q_real_p,

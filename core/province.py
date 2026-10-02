@@ -22,12 +22,6 @@ class Province:
         default_factory=lambda: {good: 0.0 for good in gds.GOODS}
     )
 
-    def attach_population(self):
-        self.population = Population(
-            size=self.pop_size,
-            income_pc=self.income_pc
-        )
-
 def normalized_weights(specs: list[Province]) -> dict[str, float]:
     total = sum(p.firm_weight for p in specs) or 1.0 
     return {p.name: (p.firm_weight / total) for p in specs}
