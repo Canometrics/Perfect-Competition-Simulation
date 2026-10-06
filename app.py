@@ -67,6 +67,8 @@ def sidebar_settings() -> tuple[dict, bool]:
         s.update({
             "N_FIRMS": st.number_input("Initial # firms", min_value=1, max_value=10000,
                                        value=int(cfg.N_FIRMS), step=1),
+            "RECORD_FIRM_HISTORY": st.checkbox("Record per-firm history (slower, more memory)",
+                                               value=bool(cfg.RECORD_FIRM_HISTORY)),
             "ENTRY_ALPHA": st.number_input("Entry alpha", min_value=0.0, max_value=0.1,
                                            value=float(cfg.ENTRY_ALPHA), step=0.0005, format="%.4f"),
             "ENTRY_WINDOW": st.number_input("Entry window (ticks)", min_value=1, max_value=200,
@@ -227,9 +229,6 @@ def render_treasury_histogram(firms: list) -> None:
 def firm_snapshot(firms: list) -> pd.DataFrame:
     rows = []
     for f in firms:
-        if f.history.empty:
-            continue
-        last = f.history.iloc[-1]
         rows.append({
             "id": f.id,
             "province": f.province.name if f.province else "National",
@@ -238,8 +237,8 @@ def firm_snapshot(firms: list) -> pd.DataFrame:
             "MC": round(f.MC, 4),
             "FC": round(f.FC, 2),
             "capacity": round(f.capacity, 2),
-            "q_final": round(last["quantity"], 2),
-            "profit_final": round(last["profit"], 2),
+            "q_final": round(f.q, 2),
+            "profit_final": round(f.last_profit, 2),
             "output_inventory": int(f.output_inventory),
             "treasury": round(f.treasury, 2),
             "resource_rights": round(f.resource_rights or 0.0, 4),

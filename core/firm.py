@@ -55,6 +55,7 @@ class Firm:
     firm_type: FirmType = field(init=False)
     input_requirements: dict[gds.GoodID, float] = field(init=False)
     input_inventory: dict[gds.GoodID, float] = field(init=False)
+    labor_intensity: float = field(init=False)   # workers per unit of output, from the recipe
 
     # --- Costs and rights ---
     base_MC: float | None = None
@@ -83,6 +84,7 @@ class Firm:
     _rows: list[dict] = field(default_factory=list, repr=False)
     _cached_df: pd.DataFrame | None = field(default=None, repr=False)
     _last_quantity: int | None = None
+    last_profit: float = 0.0      # this tick's profit, always kept (history is optional)
 
     @property
     def last_quantity(self) -> float | None:
@@ -96,6 +98,7 @@ class Firm:
                 self._cached_df = pd.DataFrame.from_records(self._rows, columns=_HISTORY_COLS)
             else:
                 self._cached_df = pd.DataFrame(columns=_HISTORY_COLS)
+            self._cached_df["good"] = self.good
         return self._cached_df
 
     def __post_init__(self):
@@ -109,7 +112,9 @@ class Firm:
             self.capacity = self.resource_rights * self.province.resources.get(self.good, 0)
 
         # production recipe: inputs per unit of this firm's output good
-        self.input_requirements = gds.PRODUCTION_RECIPES.get(self.good, {}).get('inputs', {}).copy()
+        recipe = gds.PRODUCTION_RECIPES.get(self.good, {})
+        self.input_requirements = recipe.get('inputs', {}).copy()
+        self.labor_intensity = float(recipe.get('labor_intensity', 0.0))
         self.input_inventory = {g: 0.0 for g in self.input_requirements}
 
         if self.treasury == 0.0 and self.start_capital != 0.0: # <- this exists as a safeguard for good reason
@@ -140,9 +145,7 @@ class Firm:
                 input_cost_per_unit += float(units) * float(p_in)
 
         # 2) Labor cost per unit of output
-        recipe = gds.PRODUCTION_RECIPES.get(self.good, {})
-        labor_intensity = float(recipe.get("labor_intensity", 0.0))  # workers per unit
-        labor_cost_per_unit = wage * labor_intensity
+        labor_cost_per_unit = wage * self.labor_intensity
 
         # Keep the input part separately: it's in MC for planning, but in the books
         # inputs are charged at what was actually paid for them (input_spend).
@@ -261,8 +264,7 @@ class Firm:
         """
         pop = self.province.population
 
-        recipe = gds.PRODUCTION_RECIPES.get(self.good, {})
-        intensity = float(recipe.get("labor_intensity", 0.0))
+        intensity = self.labor_intensity
         if intensity <= 0:
             return int(desired_q)  # no labor needed
 
@@ -304,6 +306,7 @@ class Firm:
         profit = TR - TC
 
         self.treasury += profit
+        self.last_profit = float(profit)
 
         if self.treasury < 0:
             self.neg_treasury_streak += 1
@@ -339,6 +342,8 @@ class Firm:
                 self.employees = 0
 
         # --- logging ---
+        if not cfg.RECORD_FIRM_HISTORY:
+            return TR, TC, profit
         row = self._rows[-1]
         row["revenue"] = float(TR)
         row["input_spend"] = float(spend)
@@ -375,6 +380,8 @@ class Firm:
         return self.capacity
 
     def _log_tick(self, tick: int, price: float, q: float, produced: float):
+        if not cfg.RECORD_FIRM_HISTORY:
+            return
         self._rows.append({
             "tick": tick,
             "quantity": float(q),

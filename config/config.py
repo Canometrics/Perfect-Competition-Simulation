@@ -8,6 +8,7 @@ price_alpha = 0.3       # price smoothing factor (to avoid extremely jagged pric
 
 # ----- FIRMS -----
 N_FIRMS = 60
+RECORD_FIRM_HISTORY = False  # keep a per-tick row for every firm (slow, memory-heavy; only for firm-level analysis)
 
 # Draws for firm heterogeneity
 # FC ~ lognormal, MC ~ normal clipped, capacity ~ uniform

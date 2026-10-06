@@ -135,10 +135,7 @@ class Market:
 
     def _firm_purchases_by_province(self) -> dict[str, float]:
         """Units of THIS good actually bought by each province's firms this tick (buy_inputs)."""
-        return {
-            name: sum(f.input_bought.get(self.good, 0.0) for f in prov_obj.firms)
-            for name, prov_obj in self.country.provinces.items()
-        }
+        return self._sum_over_buyers("input_bought")
 
     def _record_provinces(
         self,
@@ -184,12 +181,10 @@ class Market:
 
         dead = [f for f in self.firms if not f.active]
 
-        # Remove them from their provinces' firm lists
-        for f in dead:
-            prov = getattr(f, "province", None)
-            if prov is not None and hasattr(prov, "firms") and prov.firms is not None:
-                # remove this exact object
-                prov.firms = [pf for pf in prov.firms if pf is not f]
+        # Remove them from their provinces' firm lists (one rebuild per affected province)
+        dead_ids = {id(f) for f in dead}
+        for prov in {id(f.province): f.province for f in dead if f.province is not None}.values():
+            prov.firms = [pf for pf in prov.firms if id(pf) not in dead_ids]
 
         # Keep only active firms in the market view
         self.firms = [f for f in self.firms if f.active]
@@ -318,15 +313,28 @@ class Market:
         buy_inputs (full plan, net of their input stock), whether or not they got it.
         Returns (demand by province, national demand).
         """
-        demand_province: dict[str, float] = {}
-
-        for prov_name, prov_obj in self.country.provinces.items():
-            demand_province[prov_name] = sum(
-                f.input_requested.get(self.good, 0.0) for f in prov_obj.firms
-            )
-
+        demand_province = self._sum_over_buyers("input_requested")
         demand_nat = sum(demand_province.values())
         return demand_province, demand_nat
+
+    def _buyer_markets(self) -> list[Market]:
+        """Markets whose firms use THIS good as an input."""
+        return [m for m in self.country.markets.values() if self.good in
+                gds.PRODUCTION_RECIPES.get(m.good, {}).get("inputs", {})]
+
+    def _sum_over_buyers(self, attr: str) -> dict[str, float]:
+        """
+        Sum firm.<attr>[this good] by province, over only the firms that use this
+        good (instead of every firm in every province).
+        """
+        out = {name: 0.0 for name in self.country.provinces}
+        g = self.good
+        for m in self._buyer_markets():
+            for f in m.firms:
+                v = getattr(f, attr).get(g)
+                if v:
+                    out[f.province.name] += v
+        return out
 
 
     def get_demand_consumer(self) -> tuple[dict[str, int], int]:

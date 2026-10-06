@@ -23,9 +23,6 @@ def simulate_multi(T: int | None = None) -> tuple[pd.DataFrame, list[Firm], pd.D
         for f in prov_obj.firms
     ]
 
-    for f in firms:
-        f.history["good"] = f.good
-
     df_market = pd.DataFrame.from_records(records)
     df_province = pd.DataFrame.from_records(prov_records)
 
