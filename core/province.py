@@ -31,3 +31,11 @@ PROVINCES: list[Province] = [
     Province(name="Los Angeles", pop_size=2500, income_pc=2700.0, firm_weight=1.1, resources={"grain": 5000, 'wood': 8000, "iron": 8000}),
     Province(name="Chicago",     pop_size=3200,  income_pc=2000.0, firm_weight=0.9, resources={"grain": 5000, 'iron': 9000}),
 ]
+
+# PROVINCES: list[Province] = [
+#     Province(name="New York",    pop_size=5000, income_pc=1800.0, firm_weight=1.4, resources={"grain": 5000, "wood": 9000}),
+#     Province(name="Los Angeles", pop_size=2500, income_pc=2700.0, firm_weight=1.1, resources={"grain": 5000, 'wood': 8000, "iron": 8000}),
+#     Province(name="Chicago",     pop_size=3200,  income_pc=2000.0, firm_weight=0.9, resources={"grain": 5000, 'iron': 9000}),
+#     Province(name="Houston",     pop_size=3500,  income_pc=2100.0, firm_weight=1.0, resources={"grain": 4000, "cotton": 9000, "coal": 4000}),
+#     Province(name="Pittsburgh",  pop_size=2800,  income_pc=1900.0, firm_weight=0.8, resources={"iron": 7000, "coal": 9000, "wood": 5000}),
+# ]

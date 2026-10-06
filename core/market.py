@@ -42,19 +42,34 @@ class Market:
         else:
             self.firm_type = FirmType.Manu
 
-    def _sample_province(self, rng: np.random.Generator) -> str:
+    def _province_probs(self) -> tuple[list[str], np.ndarray]:
         """
-        Pick a random province based on province weights.
+        Provinces eligible for this market's firms, with normalized placement weights.
+        RGOs can only be placed where the province actually has the resource.
         """
         names = list(self.country.weights.keys())
+        if self.firm_type is FirmType.RGO:
+            names = [n for n in names
+                     if self.country.provinces[n].resources.get(self.good, 0) > 0]
         probs = np.array([self.country.weights[n] for n in names], dtype=float)
-        probs = probs / probs.sum()
+        if probs.sum() > 0:
+            probs = probs / probs.sum()
+        return names, probs
+
+    def _sample_province(self, rng: np.random.Generator) -> str | None:
+        """
+        Pick a random eligible province based on province weights.
+        Returns None if no province can host this market's firms.
+        """
+        names, probs = self._province_probs()
+        if not names:
+            return None
         return str(rng.choice(names, p=probs))
 
     def seed_firms(self, rng_init: np.random.Generator, n_firms: int) -> None:
-        names = list(self.country.weights.keys())
-        probs = np.array([self.country.weights[n] for n in names], dtype=float)
-        probs = probs / probs.sum()
+        names, probs = self._province_probs()
+        if not names:
+            return
 
         counts = np.random.default_rng(rng_init.integers(0, 2**31 - 1)).multinomial(
             n=n_firms, pvals=probs
@@ -71,6 +86,7 @@ class Market:
                 start_id=self.country.next_id,
                 province=self.country.provinces[name],
                 max_share=0.9,
+                fill_rights=True,
             )
             for f in batch:
                 f.market = self
@@ -95,12 +111,15 @@ class Market:
             if rng.random() >= p_entry:
                 continue
 
-            province_obj = self.country.provinces[self._sample_province(rng)]
+            name = self._sample_province(rng)
+            if name is None:
+                break
+            province_obj = self.country.provinces[name]
 
             if self.firm_type is FirmType.RGO:
                 used = province_obj.rights_given.get(self.good, 0.0)
                 if max(0.0, CAP_ENTRY - used) < MIN_RGO_SHARE:
-                    break
+                    continue  # this province is full; another draw may land elsewhere
 
             entrant = spawn_firms(
                 self.good,
@@ -114,15 +133,29 @@ class Market:
             self.firms.append(entrant)
             self.country.next_id += 1
 
+    def _firm_purchases_by_province(self) -> dict[str, float]:
+        """Units of THIS good actually bought by each province's firms this tick (buy_inputs)."""
+        return {
+            name: sum(f.input_bought.get(self.good, 0.0) for f in prov_obj.firms)
+            for name, prov_obj in self.country.provinces.items()
+        }
+
     def _record_provinces(
         self,
         tick: int,
         cons_by_prov: dict[str, int],
+        firm_by_prov: dict[str, float],
         q_consumer: int,
         q_bought_consumer: int,
         prov_records: list[dict],
     ) -> None:
-        """Split realized consumer purchases across provinces by demand share."""
+        """
+        Per-province demand and realized purchases, split by buyer type.
+        Firm purchases are exact (tracked per firm in buy_inputs); consumers buy from
+        a national pool, so their realized purchases are split by demand share.
+        Also records each province's labor market (same on every good's rows).
+        """
+        firm_bought = self._firm_purchases_by_province()
         names = list(cons_by_prov)
         running = 0
         for i, name in enumerate(names):
@@ -136,8 +169,12 @@ class Market:
                 "tick": tick,
                 "province": name,
                 "good": self.good,
-                "q_demand": d_p,
-                "q_realized": q_p,
+                "q_demand_consumer": d_p,
+                "q_demand_firm": firm_by_prov.get(name, 0.0),
+                "q_realized_consumer": q_p,
+                "q_realized_firm": firm_bought.get(name, 0.0),
+                "wage": self.country.provinces[name].population.wage,
+                "employment_rate": self.country.provinces[name].population.employment_rate,
             })
 
     def _remove_inactive(self) -> None:
@@ -272,7 +309,7 @@ class Market:
 
     def update_firm_costs(self, prices: dict[gds.GoodID, float]) -> None:
         for f in self.firms:
-            f.update_input_cost(prices, wage=cfg.WAGE)
+            f.update_input_cost(prices, wage=f.province.population.wage)
 
 
     def get_demand_firm(self) -> tuple[dict[str, float], float]:
@@ -309,7 +346,7 @@ class Market:
 
 
     def step(self, tick: int, records: list[dict], prov_records: list[dict]) -> None:
-        _firm_by_prov, q_firm = self.get_demand_firm()
+        firm_by_prov, q_firm = self.get_demand_firm()
         cons_by_prov, q_consumer = self.get_demand_consumer()
 
         q_consumer = int(max(0, q_consumer))
@@ -360,9 +397,10 @@ class Market:
             "active_firms": active_firms,
             "good": self.good,
             "employment_total": self.country.employment_total(),
+            "wage_avg": self.country.average_wage(),
         }
         records.append(rec)
-        self._record_provinces(tick, cons_by_prov, q_consumer, q_bought_consumer, prov_records)
+        self._record_provinces(tick, cons_by_prov, firm_by_prov, q_consumer, q_bought_consumer, prov_records)
 
         # 5) price update, then entry
         self._price_update(q_demand_total, supply_total)

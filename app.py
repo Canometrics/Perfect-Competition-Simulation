@@ -77,6 +77,19 @@ def sidebar_settings() -> tuple[dict, bool]:
         })
 
         st.markdown("---")
+        st.subheader("Labor market")
+        s.update({
+            "WAGE": st.number_input("Initial wage", min_value=0.0, max_value=1000.0,
+                                    value=float(cfg.WAGE), step=0.1),
+            "TARGET_EMPLOYMENT": st.number_input("Target employment rate", min_value=0.0,
+                                                 max_value=0.999, value=float(cfg.TARGET_EMPLOYMENT),
+                                                 step=0.01, format="%.3f"),
+            "WAGE_ADJ_SPEED": st.number_input("Wage adjustment speed (max pct/tick)", min_value=0.0,
+                                              max_value=1.0, value=float(cfg.WAGE_ADJ_SPEED),
+                                              step=0.01, format="%.3f"),
+        })
+
+        st.markdown("---")
         st.subheader("Treasury")
         s.update({
             "START_CAPITAL": st.number_input("Starting capital per firm", min_value=0.0, max_value=1e9,
@@ -144,6 +157,12 @@ def render_employment(df_market: pd.DataFrame) -> None:
     line_chart(emp, {"employment_total": "Employed (national)"},
                title="National Employment over time", ylabel="Workers")
 
+    if "wage_avg" in df_market.columns:
+        st.header("National average wage")
+        wage = df_market[["tick", "wage_avg"]].drop_duplicates("tick").sort_values("tick")
+        line_chart(wage, {"wage_avg": "Average wage (employment-weighted)"},
+                   title="Average wage over time", ylabel="Wage per worker per tick")
+
 
 def render_provinces(df_province: pd.DataFrame) -> None:
     if not isinstance(df_province, pd.DataFrame) or df_province.empty:
@@ -155,29 +174,40 @@ def render_provinces(df_province: pd.DataFrame) -> None:
     for tab, (name, df_p) in zip(st.tabs([n for n, _ in groups]), groups):
         with tab:
             st.caption(f"Good: {name}")
-            demand = df_p.pivot_table(index="tick", columns="province",
-                                      values="q_demand", aggfunc="sum").fillna(0.0)
-            provs = {p: p for p in demand.columns}
+            # rows: demand vs realized purchases; columns: consumers vs firms
+            panels = [
+                [("q_demand_consumer", "Consumer demand"), ("q_demand_firm", "Firm demand")],
+                [("q_realized_consumer", "Consumer purchases"), ("q_realized_firm", "Firm purchases")],
+            ]
+            for row in panels:
+                for col, (value, title) in zip(st.columns(2), row):
+                    with col:
+                        st.subheader(title)
+                        if value not in df_p.columns:
+                            continue
+                        wide = df_p.pivot_table(index="tick", columns="province",
+                                                values=value, aggfunc="sum").fillna(0.0)
+                        if not wide.to_numpy().any():
+                            st.caption(f"No {title.lower()} for {name}.")
+                            continue
+                        line_chart(wide.reset_index(), {p: p for p in wide.columns},
+                                   title=f"{title} by province", ylabel="Units",
+                                   legend_kw=prov_legend)
 
-            st.subheader("Province demand over time")
-            line_chart(demand.reset_index(), provs, title="Demand by province",
-                       ylabel="Units", legend_kw=prov_legend)
-
-            if "q_realized" in df_p.columns:
-                realized = df_p.pivot_table(index="tick", columns="province",
-                                            values="q_realized", aggfunc="sum").fillna(0.0)
-                st.subheader("Province realized purchases over time")
-                line_chart(realized.reset_index(), provs, title="Realized purchases by province",
-                           ylabel="Units", legend_kw=prov_legend)
-
-            st.subheader("Provincial demand shares")
-            shares = demand.div(demand.sum(axis=1).replace(0, 1.0), axis=0)
-            fig, ax = plt.subplots()
-            shares.plot.area(ax=ax)
-            ax.set(xlabel="Tick", ylabel="Share", title="Demand shares (stacked)", ylim=(0, 1))
-            ax.legend(title="Province", bbox_to_anchor=(1.04, 1), loc="upper left")
-            st.pyplot(fig)
-            plt.close(fig)
+    if {"wage", "employment_rate"} <= set(df_province.columns):
+        # labor columns repeat on every good's rows; keep one per (tick, province)
+        labor = df_province.drop_duplicates(["tick", "province"])
+        c1, c2 = st.columns(2)
+        for col, (value, title, ylabel) in zip(
+            (c1, c2),
+            [("wage", "Wage by province", "Wage"),
+             ("employment_rate", "Employment rate by province", "Share employed")],
+        ):
+            with col:
+                st.subheader(title)
+                wide = labor.pivot(index="tick", columns="province", values=value)
+                line_chart(wide.reset_index(), {p: p for p in wide.columns},
+                           title=title, ylabel=ylabel, legend_kw=prov_legend)
 
     with st.expander("Province panel data"):
         st.dataframe(df_province)

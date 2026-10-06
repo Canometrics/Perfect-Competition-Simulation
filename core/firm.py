@@ -22,6 +22,7 @@ _HISTORY_COLS = [
     "produced",
     "price",
     "input_spend",
+    "wage_bill",
     "revenue",
     "cost",
     "profit",
@@ -68,6 +69,7 @@ class Firm:
 
     # --- Input purchasing ---
     input_requested: dict[gds.GoodID, float] = field(default_factory=dict)  # what the firm tried to buy this tick
+    input_bought: dict[gds.GoodID, float] = field(default_factory=dict)     # what it actually got this tick
     input_cost_per_unit: float = 0.0   # input bundle value per unit at current prices (part of MC, for planning)
     input_spend: float = 0.0           # cash actually paid for inputs this tick, booked in book_finance
     active: bool = True
@@ -189,6 +191,7 @@ class Firm:
             self.q = 0
             self.q_produced = 0
             self.input_requested = {}
+            self.input_bought = {}
             return
 
         q_desired = self.plan_quantity(price)
@@ -217,6 +220,7 @@ class Firm:
         RGOs have no inputs and get desired_q back unchanged.
         """
         self.input_requested = {}
+        self.input_bought = {}
         if not self.input_requirements or desired_q <= 0:
             return desired_q
 
@@ -240,6 +244,7 @@ class Firm:
                 m = markets[g]
                 got = m.sell_to_firm(need)
                 self.input_inventory[g] += got
+                self.input_bought[g] = got
                 self.input_spend += got * m.price
 
         return q_buy
@@ -277,17 +282,22 @@ class Firm:
     def book_finance(self, price: float, sales: float) -> tuple[float, float, float]:
         """
         Revenue comes from units sold. Costs:
-          - base + labor cost on units PRODUCED this tick (unsold units were still made)
+          - base cost on units PRODUCED this tick (unsold units were still made)
+          - wages for every worker employed this tick, at the province wage;
+            this money is paid to the province's households
           - inputs at what was actually paid for them this tick (input_spend)
-        MC includes the input bundle at current prices for planning, so that part is
-        taken back out here to avoid charging for inputs twice.
+        MC (wage * labor_intensity + inputs at current prices) is only used for planning.
         Unsold units return to inventory and carry no further cost when sold later.
         """
         unsold = max(self.q - sales, 0.0)
         self.output_inventory += round(unsold)
 
+        pop = self.province.population
+        wage_bill = pop.wage * self.employees
+        pop.receive_wages(wage_bill)
+
         TR = price * sales
-        VC = (self.MC - self.input_cost_per_unit) * self.q_produced + self.input_spend
+        VC = self.base_MC * self.q_produced + wage_bill + self.input_spend
         TC = self.FC + VC
         spend = self.input_spend
         self.input_spend = 0.0
@@ -332,6 +342,7 @@ class Firm:
         row = self._rows[-1]
         row["revenue"] = float(TR)
         row["input_spend"] = float(spend)
+        row["wage_bill"] = float(wage_bill)
         row["cost"] = float(TC)
         row["profit"] = float(profit)
         row["active"] = bool(self.active)
@@ -370,6 +381,7 @@ class Firm:
             "produced": float(produced),
             "price": float(price),
             "input_spend": 0.0,
+            "wage_bill": 0.0,
             "revenue": 0.0,
             "cost": 0.0,
             "profit": 0.0,
@@ -385,10 +397,17 @@ def draw_resource_rights(
     good,
     rng,
     n: int,
-    cap: float = 1.0
+    cap: float = 1.0,
+    fill_remaining: bool = False,
 ) -> np.ndarray:
     """
     Allocate resource rights up to `cap` (<= 1.0) for this province+good.
+
+    fill_remaining=True (initial seeding): split everything left under `cap`
+    among the n firms.
+    fill_remaining=False (entry): each firm draws its own share from
+    [ENTRANT_RIGHTS_LOW, ENTRANT_RIGHTS_HIGH], capped by what's left, so a lone
+    entrant can't take every right freed by exits.
     """
     used = province.rights_given.get(good, 0.0)
 
@@ -399,9 +418,12 @@ def draw_resource_rights(
         # no rights left under this cap
         return np.zeros(n)
 
-    raw = rng.uniform(0.01, 0.05, size=n)
-    shares = raw / raw.sum()
-    rights = remaining * shares
+    if fill_remaining:
+        raw = rng.uniform(0.01, 0.05, size=n)
+        rights = remaining * raw / raw.sum()
+    else:
+        raw = rng.uniform(cfg.ENTRANT_RIGHTS_LOW, cfg.ENTRANT_RIGHTS_HIGH, size=n)
+        rights = raw * min(1.0, remaining / raw.sum())
 
     # update province bookkeeping
     province.rights_given[good] = used + rights.sum()
@@ -415,6 +437,7 @@ def spawn_firms(
         start_id: int = 0,
         province: Province = None,
         max_share: float = 1.0,
+        fill_rights: bool = False,
         ) -> list[Firm]:
 
     FC  = 20.0 * np.exp(rng.normal(cfg.FC_LOGMEAN, cfg.FC_LOGSD, size=n))
@@ -429,7 +452,8 @@ def spawn_firms(
             good,
             rng,
             n,
-            cap=max_share
+            cap=max_share,
+            fill_remaining=fill_rights,
         )
     else:
         rights = np.zeros(n)

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 # pyrefly: ignore [missing-import]
 import numpy as np
 
+import config.config as cfg
 import core.goods as gds
 import core.province as prov
 from core.market import Market
@@ -31,7 +32,7 @@ class Country:
 
         # attach a Population to each province
         for p in provinces.values():
-            p.population = Population(size=p.pop_size, income_pc=p.income_pc)
+            p.population = Population(size=p.pop_size, income_pc=p.income_pc, wage=cfg.WAGE)
 
         weights = prov.normalized_weights(specs)
 
@@ -59,6 +60,15 @@ class Country:
     def employment_total(self) -> int:
         return sum(p.population.number_employed for p in self.provinces.values())
 
+    def average_wage(self) -> float:
+        """Employment-weighted average wage (population-weighted if nobody is employed)."""
+        pops = [p.population for p in self.provinces.values()]
+        emp = sum(pp.number_employed for pp in pops)
+        if emp > 0:
+            return sum(pp.wage * pp.number_employed for pp in pops) / emp
+        size = sum(pp.size for pp in pops)
+        return sum(pp.wage * pp.size for pp in pops) / size if size else 0.0
+
     def market_order(self) -> list[Market]:
         """
         Markets sorted so each good comes after the goods it uses as inputs
@@ -75,6 +85,10 @@ class Country:
         return sorted(self.markets.values(), key=lambda m: d(m.good))
 
     def country_step(self, t: int, records: list[dict], prov_records: list[dict]) -> None:
+        # last tick's wages become this tick's household income
+        for p in self.provinces.values():
+            p.population.start_tick()
+
         # one price snapshot so every firm's MC uses the same prices
         prices = self.current_prices()
         for m in self.markets.values():
@@ -91,3 +105,7 @@ class Country:
         # consumers buy from what's left
         for m in ordered:
             m.step(tick=t, records=records, prov_records=prov_records)
+
+        # Phase 3: wages respond to this tick's labor-market tightness (used next tick)
+        for p in self.provinces.values():
+            p.population.update_wage()
