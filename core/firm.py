@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
+# pyrefly: ignore [missing-import]
 import numpy as np
 import pandas as pd
 
@@ -12,12 +13,15 @@ import config.config as cfg
 import core.goods as gds
 
 if TYPE_CHECKING:
-    from province import Province
+    from core.market import Market
+    from core.province import Province
 
 _HISTORY_COLS = [
     "tick",
     "quantity",
+    "produced",
     "price",
+    "input_spend",
     "revenue",
     "cost",
     "profit",
@@ -49,16 +53,23 @@ class Firm:
     # --- Derived / computed fields (set in __post_init__, not passed in) ---
     firm_type: FirmType = field(init=False)
     input_requirements: dict[gds.GoodID, float] = field(init=False)
-    input_inventory: dict[gds.GoodID, int] = field(init=False)
+    input_inventory: dict[gds.GoodID, float] = field(init=False)
 
     # --- Costs and rights ---
     base_MC: float | None = None
-    base_capacity: float | None = None
+    base_capacity: int | None = None
     resource_rights: float | None = None
 
     # --- Production state ---
+    q_produced: int = 0        # new units produced this tick (q = q_produced + inventory brought to market)
     output_inventory: int = 0
     employees: int = 0
+    market: Market | None = field(default=None, repr=False)  # back-reference, set by the Market that owns this firm
+
+    # --- Input purchasing ---
+    input_requested: dict[gds.GoodID, float] = field(default_factory=dict)  # what the firm tried to buy this tick
+    input_cost_per_unit: float = 0.0   # input bundle value per unit at current prices (part of MC, for planning)
+    input_spend: float = 0.0           # cash actually paid for inputs this tick, booked in book_finance
     active: bool = True
 
     # --- Financials ---
@@ -69,7 +80,7 @@ class Firm:
     # --- Internal bookkeeping / caching ---
     _rows: list[dict] = field(default_factory=list, repr=False)
     _cached_df: pd.DataFrame | None = field(default=None, repr=False)
-    _last_quantity: float | None = None
+    _last_quantity: int | None = None
 
     @property
     def last_quantity(self) -> float | None:
@@ -97,7 +108,7 @@ class Firm:
 
         # production recipe: inputs per unit of this firm's output good
         self.input_requirements = gds.PRODUCTION_RECIPES.get(self.good, {}).get('inputs', {}).copy()
-        self.input_inventory = {g: 0 for g in self.input_requirements}
+        self.input_inventory = {g: 0.0 for g in self.input_requirements}
 
         if self.treasury == 0.0 and self.start_capital != 0.0: # <- this exists as a safeguard for good reason
             self.treasury = float(self.start_capital)
@@ -131,6 +142,10 @@ class Firm:
         labor_intensity = float(recipe.get("labor_intensity", 0.0))  # workers per unit
         labor_cost_per_unit = wage * labor_intensity
 
+        # Keep the input part separately: it's in MC for planning, but in the books
+        # inputs are charged at what was actually paid for them (input_spend).
+        self.input_cost_per_unit = input_cost_per_unit
+
         # 3) Effective marginal cost
         self.MC = float(self.base_MC + input_cost_per_unit + labor_cost_per_unit)
 
@@ -163,79 +178,119 @@ class Firm:
 
     def update_quantity(self, price: float, tick: int) -> None:
         """
-        Apply the planning rule (plan_quantity), then apply the labor constraint
-        via hire_and_fire, and commit the final quantity.
+        Decide this tick's production and how much to bring to market.
+
+        plan_quantity gives the TOTAL the firm wants available to sell. Inventory
+        covers part of that, so the firm only produces the gap, limited by the labor
+        it can actually hire. New production plus all inventory goes to market;
+        whatever doesn't sell returns to inventory in book_finance.
         """
         if not self.active:
             self.q = 0
+            self.q_produced = 0
+            self.input_requested = {}
             return
-        # self.output_inventory = 0 # just to disable inventory for now
 
-        # Planned quantity given price and capacity / resources
         q_desired = self.plan_quantity(price)
-
-        # Treat q_desired as TOTAL we want available (prod + inventory).
-        # Only produce what we are missing, never less than 0.
         inv = int(max(0, self.output_inventory))
         q_to_produce = max(0, q_desired - inv)
 
-        # Labor-constrained feasible quantity of NEW production
-        q_final = self.hire_and_fire(q_to_produce, hypothetical=False) + inv
+        # Input-constrained, then labor-constrained new production
+        self.q_produced = self.hire_and_fire(self.buy_inputs(q_to_produce))
+        self._use_inputs(self.q_produced)
 
-        self.q = int(max(0, q_final))
-        self.q = q_to_produce # to disable labor market, this is not logically correct but it makes things less janky
+        # Everything on hand goes to market
+        self.q = self.q_produced + inv
         self.output_inventory = 0
 
-        self._log_tick(tick, price, self.q)
+        self._log_tick(tick, price, self.q, self.q_produced)
         self._last_quantity = self.q
 
-    def hire_and_fire(self, desired_q: int, hypothetical: bool) -> int:
+    def buy_inputs(self, desired_q: int) -> int:
         """
-        Adjust this firm's employment toward the level needed for desired_q,
-        subject to the available labor in the province.
+        Buy the inputs needed to produce desired_q, net of input stock already on
+        hand, from what upstream firms have brought to market this tick.
 
-        Returns the *feasible* output quantity given actual employment.
+        Only buys complete bundles: if one input is scarce, the firm scales down its
+        purchases of the others too, so it never pays for inputs it can't combine.
+        Returns the quantity the firm now has inputs for (<= desired_q).
+        RGOs have no inputs and get desired_q back unchanged.
+        """
+        self.input_requested = {}
+        if not self.input_requirements or desired_q <= 0:
+            return desired_q
+
+        markets = self.market.country.markets
+
+        # Record what we'd need to buy for the full plan (this is firm demand)
+        for g, units in self.input_requirements.items():
+            self.input_requested[g] = max(0.0, desired_q * units - self.input_inventory[g])
+
+        # How much output can on-hand stock + what's still for sale support?
+        q_buy = float(desired_q)
+        for g, units in self.input_requirements.items():
+            obtainable = self.input_inventory[g] + markets[g].available_to_firms()
+            q_buy = min(q_buy, obtainable / units)
+        q_buy = max(0, int(q_buy + 1e-9))
+
+        # Buy exactly enough for q_buy
+        for g, units in self.input_requirements.items():
+            need = max(0.0, q_buy * units - self.input_inventory[g])
+            if need > 0:
+                m = markets[g]
+                got = m.sell_to_firm(need)
+                self.input_inventory[g] += got
+                self.input_spend += got * m.price
+
+        return q_buy
+
+    def _use_inputs(self, q: int) -> None:
+        """Consume inputs for q units of output. Unused inputs stay in stock for next tick."""
+        for g, units in self.input_requirements.items():
+            self.input_inventory[g] = max(0.0, self.input_inventory[g] - q * units)
+
+    def hire_and_fire(self, desired_q: int) -> int:
+        """
+        Move employment toward the headcount needed for desired_q, limited by the
+        province's unemployed pool. Returns the feasible output given actual employees.
         """
         pop = self.province.population
 
-        # Labor needed per unit of output for this good
         recipe = gds.PRODUCTION_RECIPES.get(self.good, {})
         intensity = float(recipe.get("labor_intensity", 0.0))
+        if intensity <= 0:
+            return int(desired_q)  # no labor needed
 
-        # Desired headcount from planned output
-        desired_headcount = int(max(0, math.ceil(desired_q * intensity)))
+        desired_headcount = max(0, math.ceil(desired_q * intensity))
+        delta = desired_headcount - self.employees
 
-        # Max headcount we could possibly have = current employees + unemployed pool
-        max_headcount = self.employees + pop.number_unemployed
-        target_headcount = min(desired_headcount, max_headcount)
+        if delta > 0:
+            self.employees += pop.hired(delta)   # capped by unemployed pool
+        elif delta < 0:
+            self.employees -= pop.fired(-delta)
+        self.employees = max(self.employees, 0)
 
-        delta = target_headcount - self.employees
-
-        if not hypothetical:
-            if delta > 0:
-                # Try to hire up to delta workers from the province population
-                hired = pop.hired(delta)
-                self.employees += hired
-
-            elif delta < 0:
-                # Fire up to -delta workers and return them to the unemployment pool
-                to_fire = -delta
-                fired = pop.fired(to_fire)
-                self.employees -= fired
-
-            # guard
-            self.employees = max(self.employees, 0)
-
-        # Given actual employees, how much can we produce?
-        q_from_labor = int(self.employees / intensity)
-
-        # Final output cannot exceed planned quantity
+        # small epsilon so float division doesn't round e.g. 24.999999 down to 24
+        q_from_labor = int(self.employees / intensity + 1e-9)
         return int(min(desired_q, q_from_labor))
 
     def book_finance(self, price: float, sales: float) -> tuple[float, float, float]:
+        """
+        Revenue comes from units sold. Costs:
+          - base + labor cost on units PRODUCED this tick (unsold units were still made)
+          - inputs at what was actually paid for them this tick (input_spend)
+        MC includes the input bundle at current prices for planning, so that part is
+        taken back out here to avoid charging for inputs twice.
+        Unsold units return to inventory and carry no further cost when sold later.
+        """
+        unsold = max(self.q - sales, 0.0)
+        self.output_inventory += round(unsold)
+
         TR = price * sales
-        VC = self.MC * sales
+        VC = (self.MC - self.input_cost_per_unit) * self.q_produced + self.input_spend
         TC = self.FC + VC
+        spend = self.input_spend
+        self.input_spend = 0.0
         profit = TR - TC
 
         self.treasury += profit
@@ -276,6 +331,7 @@ class Firm:
         # --- logging ---
         row = self._rows[-1]
         row["revenue"] = float(TR)
+        row["input_spend"] = float(spend)
         row["cost"] = float(TC)
         row["profit"] = float(profit)
         row["active"] = bool(self.active)
@@ -307,11 +363,13 @@ class Firm:
 
         return self.capacity
 
-    def _log_tick(self, tick: int, price: float, q: float):
+    def _log_tick(self, tick: int, price: float, q: float, produced: float):
         self._rows.append({
             "tick": tick,
             "quantity": float(q),
+            "produced": float(produced),
             "price": float(price),
+            "input_spend": 0.0,
             "revenue": 0.0,
             "cost": 0.0,
             "profit": 0.0,
